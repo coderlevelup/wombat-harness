@@ -93,6 +93,8 @@ class Harness:
 
 
 def _run_check(task: Task, code: str) -> RunResult:
+    if task.check_cwd:
+        return _run_check_in_project(task, code)
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "solution.py").write_text(code)
@@ -101,6 +103,26 @@ def _run_check(task: Task, code: str) -> RunResult:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
         return run_command(task.check, root, task.check_timeout)
+
+
+def _run_check_in_project(task: Task, code: str) -> RunResult:
+    """Drop the candidate at check_target, run the check there, then put things back.
+
+    Saving the final result is a separate step (HarnessResult.save), so a failed or
+    interrupted attempt never leaves a candidate (or a clobbered original) in the project.
+    """
+    target = task.check_target
+    _check_target(target, force=True)  # symlink / directory / missing parent
+    original = target.read_bytes() if target.exists() else None
+    try:
+        target.write_text(code.rstrip("\n") + "\n")
+        return run_command(task.check, task.check_cwd, task.check_timeout)
+    finally:
+        if original is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_bytes(original)
+
 
 def _check_target(path: Path, force: bool) -> None:
     if path.is_symlink():

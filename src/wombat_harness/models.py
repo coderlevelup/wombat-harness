@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import ast
 import re
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _FENCE = re.compile(r"^```(?:python|py)?\s*\n(.*?)\n?```\s*$", re.DOTALL)
 
@@ -30,6 +30,32 @@ class Task(BaseModel):
         "for the check command, e.g. a test_solution.py.",
     )
     check_timeout: float = 60.0
+    check_cwd: Path | None = Field(
+        default=None,
+        description="Run the check inside this existing project directory instead of a "
+        "scratch dir. Requires check and check_target; files must be empty (the tests "
+        "already live in the project).",
+    )
+    check_target: Path | None = Field(
+        default=None,
+        description="With check_cwd: where, inside that directory, each candidate is "
+        "written for the check. The file is restored (or removed) after every check.",
+    )
+
+    @model_validator(mode="after")
+    def _check_cwd_consistent(self) -> "Task":
+        if self.check_cwd is None and self.check_target is None:
+            return self
+        if self.check_cwd is None or self.check_target is None or not self.check:
+            raise ValueError("check_cwd, check_target and check must be given together")
+        if self.files:
+            raise ValueError("files cannot be combined with check_cwd")
+        cwd, target = self.check_cwd.resolve(), self.check_target.resolve()
+        if not cwd.is_dir():
+            raise ValueError(f"check_cwd {cwd} is not a directory")
+        if cwd not in target.parents:
+            raise ValueError(f"check_target {target} must be inside check_cwd {cwd}")
+        return self
 
     @field_validator("files")
     @classmethod

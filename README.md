@@ -25,4 +25,12 @@ Save the result with `--out is_prime.py` (successful runs only; refuses to overw
 without `--force`; `--write-tests` also writes `test_is_prime.py` beside it). From Python:
 `result.save(path, force=False, write_tests=False)`.
 
+To check against a real project (its own tests, imports, config), point the check at it.
+Each candidate is dropped at `--out` for the check and the file is restored afterwards, so
+failed attempts never leave junk behind; only the final success is saved:
+
+```
+wombat "implement add(a, b)" --check-cwd ./myproj --check "python -m pytest -q" --out myproj/calc.py
+```
+
 Execution is process-isolated only; use a container for untrusted output.
