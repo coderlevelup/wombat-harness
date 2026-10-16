@@ -46,6 +46,9 @@ wombat-tui --workspace ./myproj            # chat UI
 wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y/n on stdin
 ```
 
+- **Model:** defaults to `qwen2.5-coder:7b`; run `ollama pull qwen2.5-coder:7b` first (a missing model
+  gives `model server returned 404 ... (try: ollama pull ...)`). Gemma 3 4b also worked
+  (`--model gemma3:4b`); 1.5b did not. See `reports/`.
 - **Tools:** `list_dir`, `read_file`, `grep`, `write_file`, `edit_file`, `bash`, `finish`. File tools
   cannot leave the workspace (paths and symlinks are resolved and checked).
 - **Approvals:** reads are automatic. In `ask` mode every write, edit and command shows a diff or the

@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
-from ..client import ChatClient, LLMError
+from ..client import ChatClient, LLMError, LLMRequestError
 from .tools import Bash, Finish, Step, ToolError, clip
 from .workspace import Workspace
 
@@ -112,6 +112,9 @@ class Agent:
             self._trim()
             try:
                 step = self.client.complete(self.messages, Step)
+            except LLMRequestError as e:  # no point retrying a server that is down or lacks the model
+                on_event(Event(kind="error", text=str(e), ok=False))
+                return ""
             except LLMError as e:
                 invalid += 1
                 on_event(Event(kind="error", text="model reply was invalid", detail=str(e), ok=False))

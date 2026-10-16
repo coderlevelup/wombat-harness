@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("prompt")
     ap.add_argument("--workspace", type=Path, default=Path("."))
     ap.add_argument("--mode", choices=[p.value for p in Policy], default="ask")
-    ap.add_argument("--model", default="qwen2.5-coder:1.5b")
+    ap.add_argument("--model", default="qwen2.5-coder:7b")
     ap.add_argument("--base-url", default="http://localhost:11434/v1")
     ap.add_argument("--max-steps", type=int, default=25)
     a = ap.parse_args(argv)

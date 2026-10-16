@@ -1,6 +1,6 @@
 import pytest
 
-from wombat_harness import LLMError
+from wombat_harness import LLMError, LLMRequestError
 from pydantic import ValidationError
 
 from wombat_harness.agent import Agent, Policy, Step, ToolError, Workspace
@@ -230,3 +230,11 @@ def test_old_turns_dropped_before_current_task(ws):
         run(a, f"task {i} " + "y" * 300)
     texts = [m["content"] for m in a.client.seen[-1]]
     assert any(t.startswith("task 3") for t in texts) and not any(t.startswith("task 0") for t in texts)
+
+
+def test_request_error_ends_turn_immediately_with_the_real_message(ws):
+    c = Scripted(LLMRequestError("model server returned 404: model 'x' not found (try: ollama pull x)"),
+                 step("finish", message="never reached"))
+    reply, ev = run(Agent(c, ws))
+    assert reply == "" and len(ev) == 1 and ev[0].kind == "error" and "ollama pull x" in ev[0].text
+    assert len(c.steps) == 1  # no retries

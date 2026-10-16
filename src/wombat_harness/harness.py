@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .client import ChatClient, LLMError
+from .client import ChatClient, LLMError, LLMRequestError
 from .models import CodeResponse, Task
 from .sandbox import RunResult, run_command, run_python
 
@@ -81,6 +81,11 @@ class Harness:
             result.attempts.append(attempt)
             try:
                 attempt.response = self.client.complete(messages, CodeResponse)
+            except LLMRequestError as e:  # server problem: more attempts would fail the same way
+                attempt.error = str(e)
+                if on_attempt:
+                    on_attempt(n, attempt)
+                return result
             except LLMError as e:
                 attempt.error = str(e)
                 messages.append({"role": "user", "content": f"Your reply was invalid: {e}\nTry again."})

@@ -10,7 +10,7 @@ them as "this worked / this failed once", not as rates.
 |---|---|
 | Server | Ollama 0.40.5, OpenAI-compatible `/v1` endpoint |
 | Hardware | 4 vCPU, 15 GB RAM, **CPU only** (cloud container) |
-| Models | `qwen2.5-coder` 0.5b, 1.5b, 7b (default Ollama quantisation) |
+| Models | `qwen2.5-coder` 0.5b, 1.5b, 7b; `gemma3` 4b (default Ollama quantisation) |
 | Sampling | temperature 0.2 (the harness default) |
 | Structured output | pydantic JSON schema sent as `response_format: json_schema` |
 
@@ -65,6 +65,8 @@ then run the tests."* `add(a, b)` returns `a - b`; `mul` is correct.
 | B | 1.5b, union | **Found and fixed the bug** (`a - b` to `a + b`) on the first edit, then failed to verify: ran `bash test_calc.py` instead of pytest, mis-diagnosed the shell errors, and looped until the 10-step cap. | 1 m 58 s |
 | C | 7b, union, headless `wombat-agent --mode yolo` | **Success.** read test, ran `python -m pytest -q` (saw `assert -1 == 3`), read `calc.py`, edited, re-ran tests (`2 passed`), finished with a correct summary. | 2 m 55 s |
 | D | 7b, union, **chat TUI** (`ChatApp`, mode `ask`, approvals answered `y` by a script) | **Success.** Same sequence; 2 approvals (the edit with a diff preview, the pytest command); UI returned to ready. | 2 m 52 s |
+| E | **Gemma 3 4b**, union, headless `wombat-agent --mode yolo` | **Success.** Read `calc.py`, edited, ran `python -m pytest -q` (`2 passed`), finished. Fewer steps than 7b took. | 1 m 18 s |
+| F | Gemma 3 4b, union, chat TUI (mode `ask`, scripted `y`), 2 runs | **Success** both times, 2 approvals each. | 1 m 40 s, then 1 m 11 s |
 
 After run B the system prompt got one line saying to run Python tests with `python -m pytest -q`
 and never to run a `.py` file with `bash`. Runs C and D used that prompt; B did not, so B and C are
@@ -72,7 +74,7 @@ not a clean model-only comparison.
 
 ## What this suggests
 
-- **Use 7b or larger for the agent.** 1.5b can sometimes locate and fix a one-line bug but cannot
+- **Use a 4b-7b model or larger for the agent.** `qwen2.5-coder:7b` and `gemma3:4b` both completed it; 1.5b can sometimes locate and fix a one-line bug but cannot
   reliably drive the verify step, and loops. 0.5b was only tried in the one-shot harness, where it
   failed the harder task.
 - **Constrain the output with a per-tool schema (union).** It was the difference between the model
@@ -84,11 +86,11 @@ not a clean model-only comparison.
 
 ## Caveats
 
-- n = 1 per configuration; one tiny task; one model family. Do not read rates into any of this.
+- n = 1 per configuration (2 for the Gemma TUI run); one tiny task; two model families. Do not read rates into any of this, or rank the models from them.
 - Ollama's default context window is small and truncates silently. The agent keeps prompts under
   ~16k characters by trimming, but `OLLAMA_CONTEXT_LENGTH` was not raised for these runs. Raising it
   is recommended for anything longer.
-- The TUI run (D) was driven by a script pressing keys through Textual's test harness, not by a
+- The TUI runs (D, F) were driven by a script pressing keys through Textual's test harness, not by a
   person at a terminal.
 
 ## Reproduce
