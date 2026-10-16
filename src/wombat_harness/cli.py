@@ -23,7 +23,12 @@ def main(argv: list[str] | None = None) -> int:
     res = Harness(OpenAICompatClient(a.model, a.base_url), a.attempts).run(task)
     if a.verbose:
         for i, at in enumerate(res.attempts, 1):
-            status = "ok" if at.run and at.run.ok else (at.error or at.run.feedback() if at.run else "no run")
+            if at.error:
+                status = f"invalid reply: {at.error}"
+            elif at.run and at.run.ok:
+                status = "ok"
+            else:
+                status = at.run.feedback().strip().splitlines()[-1] if at.run else "no run"
             print(f"[attempt {i}] {status}", file=sys.stderr)
     if res.code:
         print(res.code)
