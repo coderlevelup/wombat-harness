@@ -228,6 +228,7 @@ def test_check_cwd_runs_in_project_and_restores_original(tmp_path):
     assert r.ok and len(r.attempts) == 2
     assert not r.attempts[0].check.ok and r.attempts[1].check.ok
     assert target.read_text() == "ORIGINAL\n"  # check never leaves a candidate behind
+    assert not (proj / "__pycache__").exists()  # and no bytecode (stale-.pyc hazard)
     r.save(target, force=True)
     assert "a + b" in target.read_text()
 

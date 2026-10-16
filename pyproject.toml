@@ -7,10 +7,12 @@ requires-python = ">=3.10"
 dependencies = ["pydantic>=2", "httpx>=0.27"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+tui = ["textual>=0.80"]
+dev = ["pytest", "pytest-asyncio", "textual>=0.80"]
 
 [project.scripts]
 wombat = "wombat_harness.cli:main"
+wombat-tui = "wombat_harness.tui.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -21,3 +23,4 @@ packages = ["src/wombat_harness"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

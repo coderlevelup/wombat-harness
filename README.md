@@ -34,3 +34,20 @@ wombat "implement add(a, b)" --check-cwd ./myproj --check "python -m pytest -q" 
 ```
 
 Execution is process-isolated only; use a container for untrusted output.
+
+## TUI
+
+```
+pip install -e '.[tui]'
+wombat-tui            # demo runner: fake output, to try the UI
+wombat-tui --live     # real local model on the built-in sample targets
+```
+
+Pick a target in the sidebar, `r` runs it, `s` stops it (cooperatively: between attempts, since an
+in-flight model call or subprocess isn't interrupted), `c` clears the log, `q` quits. The sidebar and
+Run are disabled while a run is in progress.
+
+The UI depends only on the `Runner` protocol in `wombat_harness/tui/runner.py` (no Textual there);
+`HarnessRunner` adapts the real `Harness`, which now takes `on_attempt` and `should_stop` callbacks.
+Runs execute in a Textual thread worker that only posts messages, so the event loop never blocks.
+Tests drive the app headlessly with `App.run_test()` (see `tests/test_tui.py`).
