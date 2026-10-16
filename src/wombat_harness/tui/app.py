@@ -235,8 +235,10 @@ class ChatApp(App):
 
 
 def _tidy(line: str) -> str:
-    """Display only: pytest pads its progress line with ~70 spaces, which wraps badly."""
-    return re.sub(r" {4,}", "  ", line.rstrip())
+    """Display only: pytest pads its progress line with ~70 spaces, which wraps badly.
+
+    Only long runs *between* words are collapsed, so code indentation is preserved."""
+    return re.sub(r"(?<=\S) {8,}(?=\S)", "  ", line.rstrip())  # never touches indentation
 
 
 def _result(e: Event, max_lines: int = 12) -> Text:

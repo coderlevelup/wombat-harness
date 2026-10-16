@@ -251,3 +251,12 @@ def test_display_tidying():
     e = Event(kind="result", text="bash", detail="exit code 0\n..                                   [100%]\n2 passed  \n")
     assert "..  [100%]" in _result(e).plain and not _result(e).plain.endswith(" ")
     assert _colour_diff("-a\n+b\n \n \n").plain.endswith("+b\n")  # no trailing blank context
+
+
+def test_display_tidying_keeps_code_indentation():
+    from wombat_harness.tui.app import _result
+
+    code = "   2          return a - b\n   3  x = [1,          2]"
+    out = _result(Event(kind="result", text="read_file", detail=code)).plain
+    assert "   2          return a - b" in out  # leading/indent runs untouched
+    assert "[1,  2]" in out                      # long run between tokens collapsed
