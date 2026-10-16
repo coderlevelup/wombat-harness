@@ -256,7 +256,7 @@ def test_display_tidying():
 def test_display_tidying_keeps_code_indentation():
     from wombat_harness.tui.app import _result
 
-    code = "   2          return a - b\n   3  x = [1,          2]"
+    code = "   2      return a - b\n   3              deeper = 1\n   4  x = [1," + " " * 40 + "2]"
     out = _result(Event(kind="result", text="read_file", detail=code)).plain
-    assert "   2          return a - b" in out  # leading/indent runs untouched
-    assert "[1,  2]" in out                      # long run between tokens collapsed
+    assert "   2      return a - b" in out and "   3              deeper = 1" in out  # indentation intact
+    assert "[1,  2]" in out  # a 40-space run is collapsed
