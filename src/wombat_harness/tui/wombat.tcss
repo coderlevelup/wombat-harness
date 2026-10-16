@@ -1,0 +1,47 @@
+Screen {
+    layout: vertical;
+}
+
+#transcript {
+    height: 1fr;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $background;
+    scrollbar-color: $primary-darken-2;
+}
+
+#approval {
+    display: none;
+    height: auto;
+    margin: 0 1;
+    padding: 0 1;
+    border: round $warning;
+    background: $surface;
+}
+
+#approval.visible {
+    display: block;
+}
+
+#prompt {
+    margin: 0 1;
+    border: round $primary-darken-2;
+}
+
+#prompt:focus {
+    border: round $primary;
+}
+
+#prompt:disabled {
+    opacity: 50%;
+}
+
+#status {
+    height: 1;
+    margin: 0 2;
+    color: $text-muted;
+}
+
+#status.running  { color: $success; }
+#status.awaiting { color: $warning; text-style: bold; }
+#status.stopping { color: $warning; }

@@ -12,7 +12,24 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMError(RuntimeError):
-    pass
+    """The model's reply was unusable (bad JSON, failed validation). Worth retrying."""
+
+
+class LLMRequestError(LLMError):
+    """The server could not be reached or refused the request. Retrying won't help."""
+
+
+def _describe_http_error(r: httpx.Response, model: str) -> str:
+    """Prefer the server's own message (Ollama: "model 'x' not found") over httpx's generic one."""
+    try:
+        err = r.json().get("error")
+        detail = err.get("message", "") if isinstance(err, dict) else str(err or "")
+    except (ValueError, AttributeError):
+        detail = r.text.strip()[:300]
+    msg = f"model server returned {r.status_code}" + (f": {detail}" if detail else "")
+    if r.status_code == 404 and "not found" in detail.lower():
+        msg += f" (try: ollama pull {model})"
+    return msg
 
 
 class ChatClient(Protocol):
@@ -40,7 +57,7 @@ class OpenAICompatClient:
         timeout: float = 120.0,
         transport: httpx.BaseTransport | None = None,
     ):
-        self.model, self.temperature = model, temperature
+        self.model, self.temperature, self.base_url, self.timeout = model, temperature, base_url, timeout
         self._http = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
@@ -65,10 +82,18 @@ class OpenAICompatClient:
         }
         try:
             r = self._http.post("/chat/completions", json=body)
-            r.raise_for_status()
+        except httpx.TimeoutException:
+            raise LLMRequestError(
+                f"no reply from {self.base_url} within {self.timeout:.0f}s (slow model or CPU?)") from None
+        except httpx.TransportError as e:
+            raise LLMRequestError(
+                f"cannot reach the model server at {self.base_url}: {e}. Is Ollama running?") from None
+        if r.status_code >= 400:
+            raise LLMRequestError(_describe_http_error(r, self.model))
+        try:
             content = r.json()["choices"][0]["message"]["content"]
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
-            raise LLMError(f"model request failed: {e}") from e
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            raise LLMError(f"unexpected response from the model server: {e!r}") from None
         try:
             return schema.model_validate_json(extract_json(content))
         except (ValidationError, json.JSONDecodeError) as e:

@@ -67,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 status = at.run.feedback().strip().splitlines()[-1] if at.run else "no run"
             print(f"[attempt {i}] {status}", file=sys.stderr)
+    if not res.ok and res.attempts and not res.code and res.attempts[-1].error:
+        print(f"error: {res.attempts[-1].error}", file=sys.stderr)
     if res.code:
         print(res.code)
     if a.out and res.ok:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .client import ChatClient, LLMError
+from .client import ChatClient, LLMError, LLMRequestError
 from .models import CodeResponse, Task
 from .sandbox import RunResult, run_command, run_python
 
@@ -16,6 +16,10 @@ SYSTEM = (
     "The `code` field must be complete, runnable Python with no markdown fences. "
     "Use only the standard library unless told otherwise."
 )
+
+# Candidates are rewritten repeatedly (same path, often same size, within one second), which
+# defeats Python's mtime+size .pyc check and runs stale code; it also litters the project.
+_CHECK_ENV = {"PYTHONDONTWRITEBYTECODE": "1"}
 
 
 class Attempt(BaseModel):
@@ -55,21 +59,38 @@ class Harness:
     def __init__(self, client: ChatClient, max_attempts: int = 3):
         self.client, self.max_attempts = client, max_attempts
 
-    def run(self, task: Task) -> HarnessResult:
+    def run(
+        self,
+        task: Task,
+        on_attempt: Callable[[int, Attempt], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> HarnessResult:
+        """Run the task. `on_attempt(n, attempt)` fires after each attempt finishes;
+        `should_stop()` is polled between attempts (an in-flight model call or
+        subprocess is not interrupted). Both are for UIs; neither changes the result."""
         user = task.prompt
         if task.tests:
             user += f"\n\nYour code must pass these tests:\n{task.tests}"
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
         result = HarnessResult(ok=False, tests=task.tests)
 
-        for _ in range(self.max_attempts):
+        for n in range(1, self.max_attempts + 1):
+            if should_stop and should_stop():
+                break
             attempt = Attempt()
             result.attempts.append(attempt)
             try:
                 attempt.response = self.client.complete(messages, CodeResponse)
+            except LLMRequestError as e:  # server problem: more attempts would fail the same way
+                attempt.error = str(e)
+                if on_attempt:
+                    on_attempt(n, attempt)
+                return result
             except LLMError as e:
                 attempt.error = str(e)
                 messages.append({"role": "user", "content": f"Your reply was invalid: {e}\nTry again."})
+                if on_attempt:
+                    on_attempt(n, attempt)
                 continue
 
             code = attempt.response.code
@@ -82,6 +103,8 @@ class Harness:
                     failure = f"The check command `{task.check}` failed:\n{attempt.check.feedback()}"
             elif not attempt.run.ok:
                 failure = f"That failed:\n{attempt.run.feedback()}"
+            if on_attempt:
+                on_attempt(n, attempt)
             if failure is None:
                 result.ok = True
                 return result
@@ -102,7 +125,7 @@ def _run_check(task: Task, code: str) -> RunResult:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-        return run_command(task.check, root, task.check_timeout)
+        return run_command(task.check, root, task.check_timeout, env=_CHECK_ENV)
 
 
 def _run_check_in_project(task: Task, code: str) -> RunResult:
@@ -116,7 +139,7 @@ def _run_check_in_project(task: Task, code: str) -> RunResult:
     original = target.read_bytes() if target.exists() else None
     try:
         target.write_text(code.rstrip("\n") + "\n")
-        return run_command(task.check, task.check_cwd, task.check_timeout)
+        return run_command(task.check, task.check_cwd, task.check_timeout, env=_CHECK_ENV)
     finally:
         if original is None:
             target.unlink(missing_ok=True)

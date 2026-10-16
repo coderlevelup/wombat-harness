@@ -45,13 +45,18 @@ def run_python(code: str, tests: str | None = None, timeout: float = 10.0) -> Ru
 
 
 def run_command(
-    cmd: str | list[str], cwd: str | Path, timeout: float = 60.0, max_output: int = 20_000
+    cmd: str | list[str],
+    cwd: str | Path,
+    timeout: float = 60.0,
+    max_output: int = 20_000,
+    env: dict[str, str] | None = None,
 ) -> RunResult:
     """Run a command (no shell: a string is split with shlex) in `cwd`.
 
     The command is always supplied by the caller, never chosen by the model.
     It runs in its own process group so a timeout kills any children too.
-    Output is truncated to the last `max_output` characters.
+    Output is truncated to the last `max_output` characters. `env` is added to the
+    inherited environment.
     """
     argv = shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
     if not argv:
@@ -60,6 +65,7 @@ def run_command(
         proc = subprocess.Popen(
             argv, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True,
+            env={**os.environ, **env} if env else None,
         )
     except OSError as e:
         return RunResult(ok=False, stderr=f"could not start {argv[0]!r}: {e}")

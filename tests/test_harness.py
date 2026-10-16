@@ -228,6 +228,7 @@ def test_check_cwd_runs_in_project_and_restores_original(tmp_path):
     assert r.ok and len(r.attempts) == 2
     assert not r.attempts[0].check.ok and r.attempts[1].check.ok
     assert target.read_text() == "ORIGINAL\n"  # check never leaves a candidate behind
+    assert not (proj / "__pycache__").exists()  # and no bytecode (stale-.pyc hazard)
     r.save(target, force=True)
     assert "a + b" in target.read_text()
 
@@ -273,3 +274,56 @@ def test_check_cwd_validation(tmp_path):
     task = Task(prompt="x", check="true", check_cwd=tmp_path, check_target=link)
     with pytest.raises(ValueError, match="symlink"):
         Harness(Scripted(good("x = 1"))).run(task)
+
+
+# -- model server errors ----------------------------------------------------------------------
+
+def _client(handler):
+    return OpenAICompatClient(model="nope:1b", transport=httpx.MockTransport(handler))
+
+
+def test_missing_model_surfaces_ollama_message_and_hint():
+    from wombat_harness import LLMRequestError
+
+    def handler(req):
+        return httpx.Response(404, json={"error": {"message": "model 'nope:1b' not found"}})
+
+    with pytest.raises(LLMRequestError) as e:
+        _client(handler).complete([{"role": "user", "content": "hi"}], CodeResponse)
+    msg = str(e.value)
+    assert "404" in msg and "model 'nope:1b' not found" in msg and "ollama pull nope:1b" in msg
+    assert "mozilla" not in msg
+
+
+def test_unreachable_and_timeout_are_request_errors():
+    from wombat_harness import LLMRequestError
+
+    def down(req):
+        raise httpx.ConnectError("refused")
+
+    def slow(req):
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(LLMRequestError, match="Is Ollama running"):
+        _client(down).complete([], CodeResponse)
+    with pytest.raises(LLMRequestError, match="no reply"):
+        _client(slow).complete([], CodeResponse)
+
+
+def test_non_json_error_body_and_bad_shape():
+    from wombat_harness import LLMRequestError
+
+    with pytest.raises(LLMRequestError, match="500.*upstream exploded"):
+        _client(lambda r: httpx.Response(500, text="upstream exploded")).complete([], CodeResponse)
+    with pytest.raises(LLMError, match="unexpected response") as e:  # 200 but wrong shape: retryable
+        _client(lambda r: httpx.Response(200, json={"nope": 1})).complete([], CodeResponse)
+    assert not isinstance(e.value, LLMRequestError)
+
+
+def test_harness_stops_on_request_error_instead_of_retrying():
+    from wombat_harness import LLMRequestError
+
+    c = Scripted(LLMRequestError("server down"), good("x = 1"))
+    r = Harness(c, max_attempts=3).run(Task(prompt="x"))
+    assert not r.ok and len(r.attempts) == 1 and r.attempts[0].error == "server down"
+    assert len(c.replies) == 1  # never asked again
