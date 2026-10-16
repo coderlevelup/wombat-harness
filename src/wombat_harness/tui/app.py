@@ -8,6 +8,7 @@ status line and which footer keys exist all derive from it.
 """
 from __future__ import annotations
 
+import re
 import threading
 from enum import Enum
 
@@ -233,8 +234,13 @@ class ChatApp(App):
         self.query_one("#transcript", RichLog).write(renderable)
 
 
+def _tidy(line: str) -> str:
+    """Display only: pytest pads its progress line with ~70 spaces, which wraps badly."""
+    return re.sub(r" {4,}", "  ", line.rstrip())
+
+
 def _result(e: Event, max_lines: int = 12) -> Text:
-    lines = (e.detail or e.text).strip().splitlines() or ["(no output)"]
+    lines = [_tidy(ln) for ln in (e.detail or e.text).strip().splitlines()] or ["(no output)"]
     more = len(lines) - max_lines
     body = "\n".join("    " + ln for ln in lines[:max_lines])
     if more > 0:
@@ -244,7 +250,7 @@ def _result(e: Event, max_lines: int = 12) -> Text:
 
 def _colour_diff(preview: str, max_lines: int = 30) -> Text:
     out = Text()
-    lines = preview.splitlines()
+    lines = [ln.rstrip() for ln in preview.rstrip().splitlines()]
     for ln in lines[:max_lines]:
         style = "green" if ln.startswith("+") and not ln.startswith("+++") else \
             "red" if ln.startswith("-") and not ln.startswith("---") else "dim"

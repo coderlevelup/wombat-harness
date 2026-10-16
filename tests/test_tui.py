@@ -243,3 +243,11 @@ async def test_quit_commands(tmp_path):
         await submit(app, pilot, "/quit")
         await pilot.pause()
     assert app.return_code is not None or not app.is_running
+
+
+def test_display_tidying():
+    from wombat_harness.tui.app import _colour_diff, _result
+
+    e = Event(kind="result", text="bash", detail="exit code 0\n..                                   [100%]\n2 passed  \n")
+    assert "..  [100%]" in _result(e).plain and not _result(e).plain.endswith(" ")
+    assert _colour_diff("-a\n+b\n \n \n").plain.endswith("+b\n")  # no trailing blank context
