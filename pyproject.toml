@@ -1,0 +1,23 @@
+[project]
+name = "wombat-harness"
+version = "0.1.0"
+description = "Harness for generating Python code with a small local model, validated with pydantic"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["pydantic>=2", "httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+wombat = "wombat_harness.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wombat_harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
