@@ -5,6 +5,9 @@ inside a container if you need to treat model output as untrusted.
 """
 from __future__ import annotations
 
+import os
+import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -18,11 +21,12 @@ class RunResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
+    returncode: int | None = None
 
     def feedback(self, limit: int = 1500) -> str:
         if self.timed_out:
             return "The program timed out (infinite loop or too slow)."
-        return (self.stderr or self.stdout)[-limit:]
+        return "\n".join(x for x in (self.stdout, self.stderr) if x.strip())[-limit:]
 
 
 def run_python(code: str, tests: str | None = None, timeout: float = 10.0) -> RunResult:
@@ -38,6 +42,39 @@ def run_python(code: str, tests: str | None = None, timeout: float = 10.0) -> Ru
         except subprocess.TimeoutExpired as e:
             return RunResult(ok=False, timed_out=True, stdout=_s(e.stdout), stderr=_s(e.stderr))
     return RunResult(ok=p.returncode == 0, stdout=p.stdout, stderr=p.stderr)
+
+
+def run_command(
+    cmd: str | list[str], cwd: str | Path, timeout: float = 60.0, max_output: int = 20_000
+) -> RunResult:
+    """Run a command (no shell: a string is split with shlex) in `cwd`.
+
+    The command is always supplied by the caller, never chosen by the model.
+    It runs in its own process group so a timeout kills any children too.
+    Output is truncated to the last `max_output` characters.
+    """
+    argv = shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
+    if not argv:
+        return RunResult(ok=False, stderr="empty command")
+    try:
+        proc = subprocess.Popen(
+            argv, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as e:
+        return RunResult(ok=False, stderr=f"could not start {argv[0]!r}: {e}")
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, err = proc.communicate()
+        timed_out = True
+    return RunResult(
+        ok=proc.returncode == 0 and not timed_out,
+        stdout=out[-max_output:], stderr=err[-max_output:],
+        timed_out=timed_out, returncode=proc.returncode,
+    )
 
 
 def _s(v: bytes | str | None) -> str:
