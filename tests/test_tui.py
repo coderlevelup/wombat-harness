@@ -1,190 +1,245 @@
 import threading
 
-import pytest
-from textual.widgets import Button, OptionList, RichLog
+from textual.widgets import Input, RichLog
 
-from wombat_harness import CodeResponse, Task
-from wombat_harness.tui.app import RunState, WombatApp
-from wombat_harness.tui.runner import DemoRunner, HarnessRunner, Target, demo_targets
+from wombat_harness.agent import Event, Policy, Workspace
+from wombat_harness.tui.app import ChatApp, ChatState
 
 
-def log_text(app) -> str:
-    log = app.query_one("#log", RichLog)
+def transcript(app) -> str:
+    log = app.query_one("#transcript", RichLog)
     return "\n".join("".join(seg.text for seg in strip) for strip in log.lines)
 
 
 async def settle(app, pilot):
-    """Wait for the worker thread, then let its queued messages be handled."""
     await app.workers.wait_for_complete()
     await pilot.pause()
 
 
-class BlockUntilCancelled:
-    """Runs until cancelled, then lingers in teardown until the test calls release()."""
-
-    def __init__(self):
-        self.released = threading.Event()
-
-    def release(self):
-        self.released.set()
-
-    def run(self, target, emit, cancel):
-        emit("started")
-        cancel.wait(5)
-        self.released.wait(5)
-        return False
+async def submit(app, pilot, text):
+    app.query_one("#prompt", Input).value = text
+    await pilot.press("enter")
 
 
-class Crashes:
-    def run(self, target, emit, cancel):
-        raise RuntimeError("boom [bold]")
+class FakeAgent:
+    """Stands in for the real agent: the UI only knows the AgentPort."""
+
+    def __init__(self, tmp_path, script=None):
+        self.workspace = Workspace(tmp_path)
+        self.policy = Policy.ASK
+        self.script = script or self.default
+        self.turns, self.resets = [], 0
+        self.gate = threading.Event()
+        self.gate.set()
+
+    def reset(self):
+        self.resets += 1
+
+    def run_turn(self, text, on_event, approve, should_stop=lambda: False):
+        self.turns.append(text)
+        return self.script(self, text, on_event, approve, should_stop)
+
+    @staticmethod
+    def default(agent, text, on_event, approve, should_stop):
+        on_event(Event(kind="thought", text="looking around"))
+        on_event(Event(kind="tool", text="read_file a.py"))
+        on_event(Event(kind="result", text="read_file a.py", detail="1  x = 1"))
+        on_event(Event(kind="reply", text="All **done**."))
+        return "All done."
 
 
-async def test_layout_and_initial_state():
-    app = WombatApp(DemoRunner(delay=0))
+def edit_script(agent, text, on_event, approve, should_stop):
+    ok = approve("edit_file a.py", "--- a/a.py\n+++ b/a.py\n-x = 1\n+x = 2")
+    if ok:
+        on_event(Event(kind="tool", text="edit_file a.py"))
+        on_event(Event(kind="result", text="edit_file a.py", detail="edited a.py"))
+        on_event(Event(kind="reply", text="edited"))
+    else:
+        on_event(Event(kind="denied", text="edit_file a.py", ok=False))
+        on_event(Event(kind="reply", text="not edited"))
+    return ""
+
+
+async def test_layout_and_idle(tmp_path):
+    app = ChatApp(FakeAgent(tmp_path))
     async with app.run_test() as pilot:
-        for sel in ("Header", "Footer", "#targets", "#log", "#run", "#stop"):
+        for sel in ("Header", "Footer", "#transcript", "#prompt", "#status", "#approval"):
             app.query_one(sel)
-        assert app.state is RunState.IDLE
-        assert app.query_one("#targets", OptionList).option_count == len(demo_targets())
-        assert not app.query_one("#run", Button).disabled
-        assert app.query_one("#stop", Button).disabled
+        assert app.state is ChatState.IDLE
+        assert not app.query_one("#prompt", Input).disabled
+        assert app.query_one("#prompt", Input).has_focus
+        assert not app.query_one("#approval").has_class("visible")
+        assert str(tmp_path.resolve()) in transcript(app)
 
 
-async def test_run_streams_output_and_returns_to_idle():
-    app = WombatApp(DemoRunner(delay=0, steps=3))
+async def test_chat_turn_renders_events_in_order(tmp_path):
+    agent = FakeAgent(tmp_path)
+    app = ChatApp(agent)
     async with app.run_test() as pilot:
-        await pilot.press("r")
+        await submit(app, pilot, "hello agent")
         await settle(app, pilot)
-        assert app.state is RunState.IDLE
-        text = log_text(app)
-        assert "step 1/3" in text and "step 3/3" in text and "finished" in text
-        assert "\x1b" not in text  # ANSI was rendered, not shown raw
+        text = transcript(app)
+        assert agent.turns == ["hello agent"]
+        order = [text.index(s) for s in ("› hello agent", "looking around", "● read_file a.py", "x = 1", "All done.")]
+        assert order == sorted(order)
+        assert "**" not in text  # reply is rendered as markdown
+        assert app.state is ChatState.IDLE
+        assert app.query_one("#prompt", Input).value == ""
 
 
-async def test_controls_disable_while_running_and_reenable_after():
-    runner = BlockUntilCancelled()
-    app = WombatApp(runner)
+async def test_input_disabled_while_working(tmp_path):
+    agent = FakeAgent(tmp_path)
+    agent.gate.clear()
+
+    def slow(a, text, on_event, approve, should_stop):
+        a.gate.wait(5)
+        return ""
+
+    agent.script = slow
+    app = ChatApp(agent)
     async with app.run_test() as pilot:
-        await pilot.press("r")
+        await submit(app, pilot, "go")
         await pilot.pause()
-        assert app.query_one("#targets", OptionList).disabled
-        assert app.query_one("#run", Button).disabled
-        assert not app.query_one("#stop", Button).disabled
-        await pilot.press("r")  # re-entrancy: a second run must not start
-        assert app.state is RunState.RUNNING
-        await pilot.press("s")
-        assert app.state is RunState.TEARDOWN
-        assert app.query_one("#stop", Button).disabled
-        assert app.query_one("#targets", OptionList).disabled  # still busy while winding down
-        runner.release()
+        assert app.state is ChatState.RUNNING
+        assert app.query_one("#prompt", Input).disabled
+        assert not app.check_action("approve", ()) and app.check_action("interrupt", ())
+        agent.gate.set()
         await settle(app, pilot)
-        assert app.state is RunState.IDLE
-        assert not app.query_one("#targets", OptionList).disabled
-        assert not app.query_one("#run", Button).disabled
-        assert "stopped" in log_text(app)
+        assert not app.query_one("#prompt", Input).disabled
 
 
-async def test_footer_hides_actions_that_do_not_apply():
-    runner = BlockUntilCancelled()
-    app = WombatApp(runner)
+async def test_approval_allow(tmp_path):
+    agent = FakeAgent(tmp_path, edit_script)
+    app = ChatApp(agent)
     async with app.run_test() as pilot:
-        assert app.check_action("run", ()) and not app.check_action("stop", ())
-        await pilot.press("r")
+        await submit(app, pilot, "edit it")
         await pilot.pause()
-        assert not app.check_action("run", ()) and app.check_action("stop", ())
-        await pilot.press("s")
-        assert not app.check_action("run", ()) and not app.check_action("stop", ())  # teardown
-        runner.release()
+        assert app.state is ChatState.AWAITING
+        assert app.query_one("#approval").has_class("visible")
+        assert app.check_action("approve", ()) and app.query_one("#prompt", Input).disabled
+        text = transcript(app)
+        assert "? edit_file a.py" in text and "+x = 2" in text
+        await pilot.press("y")
         await settle(app, pilot)
+        text = transcript(app)
+        assert "allowed" in text and "edited" in text
+        assert app.state is ChatState.IDLE and not app.query_one("#approval").has_class("visible")
+        assert agent.policy is Policy.ASK
 
 
-async def test_buttons_work_too():
-    app = WombatApp(DemoRunner(delay=0, steps=1))
+async def test_approval_deny(tmp_path):
+    app = ChatApp(FakeAgent(tmp_path, edit_script))
     async with app.run_test() as pilot:
-        await pilot.click("#run")
+        await submit(app, pilot, "edit it")
+        await pilot.pause()
+        await pilot.press("n")
         await settle(app, pilot)
-        assert "finished" in log_text(app)
+        text = transcript(app)
+        assert "denied" in text and "not edited" in text
 
 
-async def test_selecting_target_changes_what_runs():
-    seen = []
-
-    class Recorder:
-        def run(self, target, emit, cancel):
-            seen.append(target.name)
-            return True
-
-    app = WombatApp(Recorder())
+async def test_approval_allow_all_switches_mode(tmp_path):
+    agent = FakeAgent(tmp_path, edit_script)
+    app = ChatApp(agent)
     async with app.run_test() as pilot:
-        await pilot.press("down", "r")
+        await submit(app, pilot, "edit it")
+        await pilot.pause()
+        await pilot.press("a")
         await settle(app, pilot)
-        assert seen == [demo_targets()[1].name]
+        assert agent.policy is Policy.YOLO and "edited" in transcript(app)
 
 
-async def test_crashing_runner_does_not_wedge_the_ui():
-    app = WombatApp(Crashes())
+async def test_y_n_a_do_nothing_when_not_awaiting(tmp_path):
+    agent = FakeAgent(tmp_path)
+    app = ChatApp(agent)
     async with app.run_test() as pilot:
-        await pilot.press("r")
+        app.query_one("#prompt", Input).blur()
+        await pilot.press("a", "y", "n")
+        assert agent.policy is Policy.ASK and app.state is ChatState.IDLE
+
+
+async def test_escape_while_awaiting_denies_and_stops(tmp_path):
+    seen = {}
+
+    def script(a, text, on_event, approve, should_stop):
+        seen["allowed"] = approve("bash: rm -rf x", "$ rm -rf x")
+        a.gate.wait(5)  # linger so the test can observe the STOPPING state
+        seen["stopped"] = should_stop()
+        on_event(Event(kind="stopped", text="stopped"))
+        return ""
+
+    agent = FakeAgent(tmp_path, script)
+    agent.gate.clear()
+    app = ChatApp(agent)
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "do it")
+        await pilot.pause()
+        assert app.state is ChatState.AWAITING
+        await pilot.press("escape")
+        assert app.state is ChatState.STOPPING
+        assert not app.check_action("approve", ()) and not app.check_action("interrupt", ())
+        agent.gate.set()
         await settle(app, pilot)
-        assert app.state is RunState.IDLE
-        assert "RuntimeError: boom [bold]" in log_text(app)  # shown literally, not as markup
+        assert seen == {"allowed": False, "stopped": True}
+        assert app.state is ChatState.IDLE and "interrupted" in transcript(app)
 
 
-async def test_no_targets_disables_run():
-    app = WombatApp(DemoRunner(delay=0), targets=[])
+async def test_escape_interrupts_running_turn(tmp_path):
+    def script(a, text, on_event, approve, should_stop):
+        while not should_stop():
+            threading.Event().wait(0.01)
+        return ""
+
+    app = ChatApp(FakeAgent(tmp_path, script))
     async with app.run_test() as pilot:
-        assert app.query_one("#run", Button).disabled
-        await pilot.press("r")
-        assert app.state is RunState.IDLE
-
-
-async def test_clear():
-    app = WombatApp(DemoRunner(delay=0, steps=1))
-    async with app.run_test() as pilot:
-        await pilot.press("r")
+        await submit(app, pilot, "go")
+        await pilot.pause()
+        assert app.state is ChatState.RUNNING
+        await pilot.press("escape")
         await settle(app, pilot)
-        await pilot.press("c")
-        assert log_text(app).strip() == ""
+        assert app.state is ChatState.IDLE
 
 
-# -- engine-side pieces, no Textual involved -----------------------------------------------
+async def test_crashing_agent_does_not_wedge_ui(tmp_path):
+    def boom(*a):
+        raise RuntimeError("kaboom [bold]")
 
-def test_demo_runner_stops_on_cancel():
-    out, cancel = [], threading.Event()
-    cancel.set()
-    assert DemoRunner(delay=0).run(Target(name="t"), out.append, cancel) is False
-    assert any("cancelled" in line for line in out)
-
-
-class Scripted:
-    def __init__(self, *codes):
-        self.codes = list(codes)
-
-    def complete(self, messages, schema):
-        return CodeResponse(plan="p", code=self.codes.pop(0))
+    app = ChatApp(FakeAgent(tmp_path, boom))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "go")
+        await settle(app, pilot)
+        assert app.state is ChatState.IDLE
+        assert "RuntimeError: kaboom [bold]" in transcript(app)  # literal, not markup
 
 
-def test_harness_runner_streams_attempts():
-    t = Target(name="add", task=Task(prompt="add", tests="assert add(1, 2) == 3"))
-    out = []
-    runner = HarnessRunner(Scripted("def add(a, b): return a - b", "def add(a, b): return a + b"))
-    assert runner.run(t, out.append, threading.Event()) is True
-    text = "\n".join(out)
-    assert "attempt 1: failed" in text and "attempt 2: ok" in text and "passed" in text
+async def test_slash_commands(tmp_path):
+    agent = FakeAgent(tmp_path)
+    app = ChatApp(agent)
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/mode yolo")
+        assert agent.policy is Policy.YOLO and "mode: yolo" in transcript(app)
+        await submit(app, pilot, "/mode nonsense")
+        assert agent.policy is Policy.YOLO and "usage: /mode" in transcript(app)
+        await submit(app, pilot, "/help")
+        assert "/clear" in transcript(app)
+        await submit(app, pilot, "/wat")
+        assert "unknown command /wat" in transcript(app)
+        await submit(app, pilot, "/clear")
+        assert agent.resets == 1 and "new conversation" in transcript(app) and "/wat" not in transcript(app)
+        assert agent.turns == []  # slash commands never reach the model
 
 
-def test_harness_runner_honours_cancel_between_attempts():
-    t = Target(name="add", task=Task(prompt="add", tests="assert False"))
-    cancel, out = threading.Event(), []
-    runner = HarnessRunner(Scripted("x = 1", "x = 2", "x = 3"), max_attempts=3)
-    runner.harness.client = type("C", (), {
-        "complete": lambda self, m, s: (cancel.set(), CodeResponse(plan="p", code="x = 1"))[1]
-    })()
-    assert runner.run(t, out.append, cancel) is False
-    assert sum("attempt" in line for line in out) == 1 and any("cancelled" in line for line in out)
+async def test_blank_input_ignored(tmp_path):
+    agent = FakeAgent(tmp_path)
+    app = ChatApp(agent)
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "   ")
+        assert agent.turns == [] and app.state is ChatState.IDLE
 
 
-def test_harness_runner_target_without_task():
-    out = []
-    assert HarnessRunner(Scripted()).run(Target(name="x"), out.append, threading.Event()) is False
+async def test_quit_commands(tmp_path):
+    app = ChatApp(FakeAgent(tmp_path))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/quit")
+        await pilot.pause()
+    assert app.return_code is not None or not app.is_running

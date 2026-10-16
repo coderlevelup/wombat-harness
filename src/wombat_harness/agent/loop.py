@@ -1,0 +1,181 @@
+"""The agent loop: model picks a tool, we (maybe ask, then) run it, feed the result back."""
+from __future__ import annotations
+
+import threading
+from collections import deque
+from collections.abc import Callable
+from enum import Enum
+from typing import Literal, Protocol
+
+from pydantic import BaseModel
+
+from ..client import ChatClient, LLMError
+from .tools import Bash, Finish, Step, ToolError, clip
+from .workspace import Workspace
+
+SYSTEM = """\
+You are wombat, a coding agent working in the project directory described below. \
+You complete the user's task by calling ONE tool per step.
+
+Reply ONLY with JSON: {"thought": "...", "action": {"tool": "<name>", ...arguments}}. Tools:
+- list_dir(path): list a directory
+- read_file(path): read a file
+- grep(pattern, path): regex search in files under path
+- write_file(path, content): create or overwrite a file with its COMPLETE content
+- edit_file(path, old, new): replace exactly one occurrence of `old` with `new`
+- bash(command): run a shell command in the project directory
+- finish(message): you are done; `message` is your answer to the user
+
+Rules: read files before editing them. Prefer edit_file for small changes. Verify your work \
+(e.g. `python -m pytest -q` via bash; never run a .py test file with bash directly). Paths are relative to the project directory. When the task is \
+done, or the user only asked a question, call finish.
+
+Project directory: <ROOT>
+Top level:
+<LISTING>"""
+
+OBSERVATION = "Tool result ({tool}):\n{output}"
+ELIDED = "[earlier tool output elided to save context]"
+
+
+class Policy(str, Enum):
+    ASK = "ask"  # confirm every write, edit and command
+    EDITS = "edits"  # file edits are automatic; commands still ask
+    YOLO = "yolo"  # nothing asks
+
+
+class Event(BaseModel):
+    kind: Literal["thought", "tool", "result", "denied", "reply", "error", "stopped"]
+    text: str
+    detail: str = ""
+    ok: bool = True
+
+
+Emit = Callable[[Event], None]
+Approve = Callable[[str, str], bool]  # (summary, preview) -> allowed?
+
+
+class AgentPort(Protocol):
+    """What a UI needs from an agent. Nothing here knows about Textual."""
+
+    policy: Policy
+    workspace: Workspace
+
+    def run_turn(self, text: str, on_event: Emit, approve: Approve,
+                 should_stop: Callable[[], bool] = ...) -> str: ...
+
+    def reset(self) -> None: ...
+
+
+class Agent:
+    def __init__(
+        self,
+        client: ChatClient,
+        workspace: Workspace,
+        policy: Policy = Policy.ASK,
+        max_steps: int = 25,
+        context_chars: int = 16_000,
+    ):
+        self.client, self.workspace, self.policy = client, workspace, policy
+        self.max_steps, self.context_chars = max_steps, context_chars
+        self.reset()
+
+    def reset(self) -> None:
+        ws = self.workspace
+        names = sorted(c.name + ("/" if c.is_dir() else "") for c in ws.root.iterdir() if c.name != ".git")
+        listing = "\n".join(names[:40]) + (f"\n... [{len(names) - 40} more]" if len(names) > 40 else "")
+        self._turns: list[int] = []  # index of each user-typed message in self.messages
+        self.messages: list[dict] = [
+            {"role": "system", "content": SYSTEM.replace("<ROOT>", str(ws.root)).replace("<LISTING>", listing or "(empty)")}
+        ]
+
+    def _needs_approval(self, call) -> bool:
+        if self.policy is Policy.YOLO:
+            return False
+        if self.policy is Policy.EDITS:
+            return isinstance(call, Bash)
+        return call.needs_approval
+
+    def run_turn(self, text: str, on_event: Emit, approve: Approve,
+                 should_stop: Callable[[], bool] | None = None) -> str:
+        """Run until the model calls finish, a limit trips, or `should_stop()`. Returns the reply."""
+        stop = should_stop or (lambda: False)
+        self._turns.append(len(self.messages))
+        self.messages.append({"role": "user", "content": text})
+        invalid = repeats = 0
+        recent: deque[str] = deque(maxlen=2)
+
+        for _ in range(self.max_steps):
+            if stop():
+                on_event(Event(kind="stopped", text="stopped"))
+                return ""
+            self._trim()
+            try:
+                step = self.client.complete(self.messages, Step)
+            except LLMError as e:
+                invalid += 1
+                on_event(Event(kind="error", text="model reply was invalid", detail=str(e), ok=False))
+                if invalid >= 3:
+                    return ""
+                self.messages.append({"role": "user", "content": f"Your reply was invalid: {clip(str(e), 400)}\nReply with the JSON again."})
+                continue
+            invalid = 0
+            self.messages.append({"role": "assistant", "content": step.model_dump_json(exclude_defaults=True)})
+            if step.thought.strip():
+                on_event(Event(kind="thought", text=step.thought.strip()))
+
+            call = step.action
+            if isinstance(call, Finish):
+                on_event(Event(kind="reply", text=call.message))
+                return call.message
+
+            key = call.model_dump_json()
+            if list(recent) == [key, key]:  # third identical call in a row
+                repeats += 1
+                self._observe(call.tool, "error: you already did exactly this twice. Try something different, or call finish.")
+                on_event(Event(kind="error", text="model is repeating itself", ok=False))
+                if repeats >= 2:
+                    return ""
+                continue
+            recent.append(key)
+
+            summary = call.summary()
+            if self._needs_approval(call):
+                if not approve(summary, call.preview(self.workspace) or ""):
+                    self._observe(call.tool, "The user denied this action. Do not retry it; ask what they want instead.")
+                    on_event(Event(kind="denied", text=summary, ok=False))
+                    if stop():
+                        on_event(Event(kind="stopped", text="stopped"))
+                        return ""
+                    continue
+            on_event(Event(kind="tool", text=summary))
+            try:
+                output, ok = call.run(self.workspace), True
+            except ToolError as e:
+                output, ok = f"error: {e}", False
+            on_event(Event(kind="result", text=summary, detail=output, ok=ok))
+            self._observe(call.tool, output)
+
+        on_event(Event(kind="error", text=f"stopped after {self.max_steps} steps without finishing", ok=False))
+        return ""
+
+    def _observe(self, tool: str, output: str) -> None:
+        self.messages.append({"role": "user", "content": OBSERVATION.format(tool=tool, output=clip(output))})
+
+    def _trim(self) -> None:
+        """Keep the prompt under budget: elide old tool output first, then drop old turns."""
+        def size() -> int:
+            return sum(len(m["content"]) for m in self.messages)
+
+        for m in self.messages[1:-1]:
+            if size() <= self.context_chars:
+                return
+            if m["role"] == "user" and m["content"].startswith("Tool result") and m["content"] != ELIDED:
+                m["content"] = ELIDED
+        while size() > self.context_chars and len(self._turns) > 1:  # drop whole old turns
+            cut = self._turns[1]
+            del self.messages[1:cut]
+            self._turns = [t - (cut - 1) for t in self._turns[1:]]
+        start = self._turns[-1]  # last resort: oldest step pairs of the current turn
+        while size() > self.context_chars and len(self.messages) > start + 3:
+            del self.messages[start + 1 : start + 3]  # the task itself (start) always stays

@@ -12,6 +12,7 @@ dev = ["pytest", "pytest-asyncio", "textual>=0.80"]
 
 [project.scripts]
 wombat = "wombat_harness.cli:main"
+wombat-agent = "wombat_harness.agent.cli:main"
 wombat-tui = "wombat_harness.tui.app:main"
 
 [build-system]

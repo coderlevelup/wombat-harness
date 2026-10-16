@@ -35,19 +35,31 @@ wombat "implement add(a, b)" --check-cwd ./myproj --check "python -m pytest -q" 
 
 Execution is process-isolated only; use a container for untrusted output.
 
-## TUI
+## Coding agent (chat)
+
+An opencode / Claude Code style loop on a local model: you chat, the model reads, searches and
+edits files and runs commands in a workspace directory, and you approve the risky steps.
 
 ```
 pip install -e '.[tui]'
-wombat-tui            # demo runner: fake output, to try the UI
-wombat-tui --live     # real local model on the built-in sample targets
+wombat-tui --workspace ./myproj            # chat UI
+wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y/n on stdin
 ```
 
-Pick a target in the sidebar, `r` runs it, `s` stops it (cooperatively: between attempts, since an
-in-flight model call or subprocess isn't interrupted), `c` clears the log, `q` quits. The sidebar and
-Run are disabled while a run is in progress.
+- **Tools:** `list_dir`, `read_file`, `grep`, `write_file`, `edit_file`, `bash`, `finish`. File tools
+  cannot leave the workspace (paths and symlinks are resolved and checked).
+- **Approvals:** reads are automatic. In `ask` mode every write, edit and command shows a diff or the
+  command and waits for `y` / `n` / `a` (allow everything this session). `--mode edits` auto-approves
+  file edits but still asks for commands; `--mode yolo` asks for nothing. `/mode` changes it live.
+- **Keys:** Esc interrupts (cooperatively: after the current model call or command), `/clear` starts
+  over, `/help`, `Ctrl+Q` quits.
+- **Why a union schema:** each step is `{thought, action}` where `action` is a pydantic discriminated
+  union of the tools, sent to the server as a JSON schema for constrained decoding. That makes the
+  model supply the right arguments for each tool; flat optional/required schemas did not (1.5b model).
+- **Context:** old tool output is elided and old turns dropped to stay under `context_chars` (16k).
+  Ollama's default context window is small; raise it (e.g. `OLLAMA_CONTEXT_LENGTH=8192`) or the
+  server will silently truncate the prompt.
 
-The UI depends only on the `Runner` protocol in `wombat_harness/tui/runner.py` (no Textual there);
-`HarnessRunner` adapts the real `Harness`, which now takes `on_attempt` and `should_stop` callbacks.
-Runs execute in a Textual thread worker that only posts messages, so the event loop never blocks.
-Tests drive the app headlessly with `App.run_test()` (see `tests/test_tui.py`).
+Architecture: `wombat_harness/agent` is the engine (no UI imports); `wombat_harness/tui` talks to it only
+through the `AgentPort` protocol. A turn runs in a Textual thread worker that only posts messages.
+Tests drive the UI headlessly with `App.run_test()` and a fake agent (`tests/test_tui.py`).

@@ -2,62 +2,46 @@ Screen {
     layout: vertical;
 }
 
-#body {
+#transcript {
     height: 1fr;
-}
-
-#sidebar {
-    width: 32;
-    border-right: solid $primary-darken-2;
     padding: 0 1;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $background;
+    scrollbar-color: $primary-darken-2;
 }
 
-#sidebar-title, #log-title {
-    color: $text-muted;
-    text-style: bold;
-    margin: 1 0 0 0;
-}
-
-#targets {
-    height: 1fr;
-    border: none;
-    background: transparent;
-}
-
-#targets:disabled {
-    opacity: 60%;
-}
-
-#main {
-    width: 1fr;
-    padding: 0 1;
-}
-
-#controls {
+#approval {
+    display: none;
     height: auto;
-    margin: 1 0;
+    margin: 0 1;
+    padding: 0 1;
+    border: round $warning;
+    background: $surface;
 }
 
-#controls Button {
-    margin-right: 1;
+#approval.visible {
+    display: block;
+}
+
+#prompt {
+    margin: 0 1;
+    border: round $primary-darken-2;
+}
+
+#prompt:focus {
+    border: round $primary;
+}
+
+#prompt:disabled {
+    opacity: 50%;
 }
 
 #status {
-    width: 1fr;
-    content-align: right middle;
-    height: 3;
+    height: 1;
+    margin: 0 2;
     color: $text-muted;
 }
 
-#status.running  { color: $success; text-style: bold; }
-#status.teardown { color: $warning; text-style: bold; }
-
-#log {
-    height: 1fr;
-    border: round $primary-darken-2;
-    background: $surface;
-    scrollbar-size-vertical: 1;
-    scrollbar-background: $surface;
-    scrollbar-color: $primary-darken-2;
-    scrollbar-color-hover: $primary;
-}
+#status.running  { color: $success; }
+#status.awaiting { color: $warning; text-style: bold; }
+#status.stopping { color: $warning; }
