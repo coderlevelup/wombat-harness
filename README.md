@@ -13,4 +13,8 @@ wombat "write is_prime(n)" --tests tests_prime.py -v
 pytest
 ```
 
+Save the result with `--out is_prime.py` (successful runs only; refuses to overwrite
+without `--force`; `--write-tests` also writes `test_is_prime.py` beside it). From Python:
+`result.save(path, force=False, write_tests=False)`.
+
 Execution is process-isolated only; use a container for untrusted output.
