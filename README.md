@@ -21,4 +21,8 @@ never the model's, and runs without a shell (`shlex`-split) with a timeout:
 wombat "write is_prime(n)" --file test_solution.py --check "python -m pytest -q"
 ```
 
+Save the result with `--out is_prime.py` (successful runs only; refuses to overwrite
+without `--force`; `--write-tests` also writes `test_is_prime.py` beside it). From Python:
+`result.save(path, force=False, write_tests=False)`.
+
 Execution is process-isolated only; use a container for untrusted output.
