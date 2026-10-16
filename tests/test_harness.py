@@ -59,3 +59,42 @@ def test_client_sends_schema_and_parses():
     out = c.complete([{"role": "user", "content": "hi"}], CodeResponse)
     assert out.code == "print(1)"
     assert seen["response_format"]["json_schema"]["schema"]["properties"]["code"]
+
+
+def test_run_command_ok_fail_timeout_missing(tmp_path):
+    import sys
+    from wombat_harness import run_command
+
+    py = sys.executable
+    assert run_command([py, "-c", "print('hi')"], tmp_path).stdout.strip() == "hi"
+    r = run_command([py, "-c", "import sys; sys.exit(3)"], tmp_path)
+    assert not r.ok and r.returncode == 3
+    assert run_command([py, "-c", "import time; time.sleep(30)"], tmp_path, timeout=0.5).timed_out
+    assert not run_command("definitely-not-a-command", tmp_path).ok
+    assert not run_command("", tmp_path).ok
+    assert len(run_command([py, "-c", "print('x'*500)"], tmp_path, max_output=50).stdout) == 50
+
+
+def test_check_command_failure_is_fed_back_then_passes():
+    import sys
+
+    test = "from solution import add\ndef test_add():\n    assert add(1, 2) == 3\n"
+    c = Scripted(good("def add(a, b): return a - b"), good("def add(a, b): return a + b"))
+    task = Task(prompt="add", check=f"{sys.executable} -m pytest -q",
+                files={"test_solution.py": test})
+    r = Harness(c).run(task)
+    assert r.ok and len(r.attempts) == 2
+    assert not r.attempts[0].check.ok and r.attempts[1].check.ok
+    assert "pytest -q" in c.calls[1][-1]["content"] and "assert" in c.calls[1][-1]["content"]
+
+
+def test_check_not_run_if_code_fails():
+    c = Scripted(good("1/0"))
+    r = Harness(c, max_attempts=1).run(Task(prompt="x", check="true"))
+    assert not r.ok and r.attempts[0].check is None
+
+
+@pytest.mark.parametrize("bad", ["../x.py", "/etc/passwd", "a/../../x", "solution.py"])
+def test_files_rejects_escaping_paths(bad):
+    with pytest.raises(ValueError):
+        Task(prompt="x", files={bad: ""})

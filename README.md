@@ -13,4 +13,12 @@ wombat "write is_prime(n)" --tests tests_prime.py -v
 pytest
 ```
 
+Run a project check (e.g. pytest) as the final gate. The code is written to
+`solution.py` in a scratch dir; extra files go beside it. The command is yours,
+never the model's, and runs without a shell (`shlex`-split) with a timeout:
+
+```
+wombat "write is_prime(n)" --file test_solution.py --check "python -m pytest -q"
+```
+
 Execution is process-isolated only; use a container for untrusted output.

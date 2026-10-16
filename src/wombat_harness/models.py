@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import re
+from pathlib import PurePosixPath
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -17,6 +18,29 @@ class Task(BaseModel):
         "generated code, in the same namespace.",
     )
     timeout: float = 10.0
+    check: str | None = Field(
+        default=None,
+        description="Optional shell command (e.g. 'python -m pytest -q') run after the "
+        "code passes. The code is written to solution.py in a scratch directory that "
+        "is the command's cwd. Supplied by the caller; the model never chooses it.",
+    )
+    files: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra files (relative path -> content) written next to solution.py "
+        "for the check command, e.g. a test_solution.py.",
+    )
+    check_timeout: float = 60.0
+
+    @field_validator("files")
+    @classmethod
+    def _files_stay_inside(cls, v: dict[str, str]) -> dict[str, str]:
+        for name in v:
+            parts = PurePosixPath(name).parts
+            if PurePosixPath(name).is_absolute() or ".." in parts or not parts:
+                raise ValueError(f"file path must be relative and inside the workdir: {name!r}")
+            if name == "solution.py":
+                raise ValueError("solution.py is reserved for the generated code")
+        return v
 
 
 class CodeResponse(BaseModel):
