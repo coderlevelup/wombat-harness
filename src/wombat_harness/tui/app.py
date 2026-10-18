@@ -267,19 +267,18 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     from pathlib import Path
 
-    from ..agent import Agent, Workspace
-    from ..client import OpenAICompatClient
+    from ..agent.factory import DEFAULT_BASE_URL, DEFAULT_MODEL, ENGINES, HELP, make_agent
 
     ap = argparse.ArgumentParser(prog="wombat-tui", description="Chat with a local-model coding agent.")
     ap.add_argument("--workspace", type=Path, default=Path("."), help="Directory the agent may read and change")
     ap.add_argument("--mode", choices=[p.value for p in Policy], default="ask")
-    ap.add_argument("--model", default="qwen2.5-coder:7b")
-    ap.add_argument("--base-url", default="http://localhost:11434/v1")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    ap.add_argument("--engine", choices=ENGINES, default="builtin", help=HELP)
     ap.add_argument("--max-steps", type=int, default=25)
     a = ap.parse_args(argv)
 
-    agent = Agent(OpenAICompatClient(a.model, a.base_url), Workspace(a.workspace), Policy(a.mode), a.max_steps)
-    ChatApp(agent).run()
+    ChatApp(make_agent(a.engine, a.model, a.base_url, a.workspace, Policy(a.mode), a.max_steps)).run()
     return 0
 
 

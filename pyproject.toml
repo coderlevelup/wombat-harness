@@ -8,7 +8,8 @@ dependencies = ["pydantic>=2", "httpx>=0.27"]
 
 [project.optional-dependencies]
 tui = ["textual>=0.80"]
-dev = ["pytest", "pytest-asyncio", "textual>=0.80"]
+pydantic-ai = ["pydantic-ai-slim[openai]>=2"]
+dev = ["pytest", "pytest-asyncio", "textual>=0.80", "pydantic-ai-slim[openai]>=2"]
 
 [project.scripts]
 wombat = "wombat_harness.cli:main"
