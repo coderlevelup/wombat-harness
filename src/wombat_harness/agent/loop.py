@@ -119,41 +119,6 @@ class Agent:
         return needs_approval(self.policy, call)
 
     def run_turn(self, text: str, on_event: Emit, approve: Approve,
-                 should_stop: Callable[[], bool] = ..., resolve: Resolve | None = None) -> str: ...
-
-    def reset(self) -> None: ...
-
-
-class Agent:
-    def __init__(
-        self,
-        client: ChatClient,
-        workspace: Workspace,
-        policy: Policy = Policy.ASK,
-        max_steps: int = 25,
-        context_chars: int = 16_000,
-    ):
-        self.client, self.workspace, self.policy = client, workspace, policy
-        self.max_steps, self.context_chars = max_steps, context_chars
-        self.reset()
-
-    def reset(self) -> None:
-        ws = self.workspace
-        names = sorted(c.name + ("/" if c.is_dir() else "") for c in ws.root.iterdir() if c.name != ".git")
-        listing = "\n".join(names[:40]) + (f"\n... [{len(names) - 40} more]" if len(names) > 40 else "")
-        self._turns: list[int] = []  # index of each user-typed message in self.messages
-        self.messages: list[dict] = [
-            {"role": "system", "content": SYSTEM.replace("<ROOT>", str(ws.root)).replace("<LISTING>", listing or "(empty)")}
-        ]
-
-    def _needs_approval(self, call) -> bool:
-        if self.policy is Policy.YOLO:
-            return False
-        if self.policy is Policy.EDITS:
-            return isinstance(call, Bash)
-        return call.needs_approval
-
-    def run_turn(self, text: str, on_event: Emit, approve: Approve,
                  should_stop: Callable[[], bool] | None = None, resolve: Resolve | None = None) -> str:
         """Run until the model calls finish, a limit trips, or `should_stop()`. Returns the reply.
 
