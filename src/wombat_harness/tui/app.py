@@ -208,8 +208,9 @@ class ChatApp(App):
             return
         self._write(Text(f"? {message.summary}", style="bold yellow"))
         self._write(_colour_diff(message.preview))
+        warning = ("⚠ This changes a test file.  ", "bold yellow") if message.preview.startswith("⚠") else ("", "")
         self.query_one("#approval", Static).update(
-            Text.assemble(("Allow this?  ", "bold"), ("y", "bold green"), " yes   ",
+            Text.assemble(warning, ("Allow this?  ", "bold"), ("y", "bold green"), " yes   ",
                           ("n", "bold red"), " no   ", ("a", "bold yellow"), " yes to everything this session"))
         self.state = ChatState.AWAITING
 
@@ -300,7 +301,8 @@ def _colour_diff(preview: str, max_lines: int = 30) -> Text:
     out = Text()
     lines = [ln.rstrip() for ln in preview.rstrip().splitlines()]
     for ln in lines[:max_lines]:
-        style = "green" if ln.startswith("+") and not ln.startswith("+++") else \
+        style = "bold yellow" if ln.startswith("⚠") else \
+            "green" if ln.startswith("+") and not ln.startswith("+++") else \
             "red" if ln.startswith("-") and not ln.startswith("---") else "dim"
         out.append("    " + ln + "\n", style=style)
     if len(lines) > max_lines:

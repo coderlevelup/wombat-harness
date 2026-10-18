@@ -28,14 +28,14 @@ from ..agent.loop import (
     DENIED_NOTE, LOOP_AFTER, REPEAT_NOTE, Approve, Emit, Event, Policy, Resolve, fail_note, needs_approval,
 )
 from ..agent.missing import Fix, describe, detect_missing
-from ..agent.tools import Bash, EditFile, Grep, ListDir, ReadFile, ToolError, WriteFile, clip
+from ..agent.tools import Bash, EditFile, Grep, ListDir, ReadFile, ToolError, WriteFile, clip, relativize
 from ..agent.workspace import Workspace
 from .client import describe_model_error
 
 INSTRUCTIONS = """\
 You are wombat, a coding agent working in the project directory described below. Complete the \
 user's task by calling tools. Read files before editing them. Prefer edit_file for small changes. \
-Do not try to install packages: if a command isn't installed, the user is asked to fix it. Verify your work (e.g. `python -m pytest -q` via bash; never run a .py test file with bash \
+Fix the code, not the tests: don't change a test to make it pass unless the user asks. Do not try to install packages: if a command isn't installed, the user is asked to fix it. Verify your work (e.g. `python -m pytest -q` via bash; never run a .py test file with bash \
 directly). Paths are relative to the project directory. When the task is done, or the user only \
 asked a question, reply with a short plain-text answer and no tool call.
 
@@ -141,7 +141,7 @@ class PydanticAIAgent:
         """
         approvals: dict[str, bool] = {}
         for part in requests.approvals:
-            call = TOOLS[part.tool_name](tool=part.tool_name, **part.args_as_dict())
+            call = relativize(TOOLS[part.tool_name](tool=part.tool_name, **part.args_as_dict()), self.workspace)
             if not approve(call.summary(), call.preview(self.workspace) or ""):
                 self._emit(Event(kind="denied", text=call.summary(), ok=False))
                 return approvals, part.tool_call_id
@@ -166,6 +166,7 @@ class PydanticAIAgent:
 
     # -- tools ----------------------------------------------------------------------------
     def _run(self, ctx: RunContext, call) -> str:
+        call = relativize(call, self.workspace)
         if needs_approval(self.policy, call) and not ctx.tool_call_approved and call.preflight(self.workspace) is None:
             raise ApprovalRequired  # (a call certain to fail just runs and returns the error: no point asking)
         summary = call.summary()

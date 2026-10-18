@@ -10,7 +10,7 @@ from __future__ import annotations
 import difflib
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Annotated, ClassVar, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -20,6 +20,30 @@ from .workspace import ToolError, Workspace
 
 MAX_FILE_BYTES = 1_000_000
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", ".mypy_cache"}
+
+
+_TEST_DIRS = {"tests", "test", "__tests__"}
+TEST_WARNING = "⚠ this changes a test file"
+
+
+def is_test_path(path: str) -> bool:
+    """Whether `path` looks like a test file: test_*.py, *_test.py, conftest.py, *.test.* / *.spec.*, or under a tests/ directory."""
+    p = PurePosixPath(path.replace("\\", "/"))
+    name = p.name.lower()
+    return (name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py"
+            or ".test." in name or ".spec." in name or bool(_TEST_DIRS & {part.lower() for part in p.parts[:-1]}))
+
+
+def relativize(call, ws: Workspace):
+    """An absolute path inside the workspace becomes a workspace-relative one, so summaries, diffs and history stay short
+    (models often send `/private/tmp/proj/x.py`). Anything else, including paths outside the workspace, is left alone."""
+    path = getattr(call, "path", None)
+    if not path or not PurePath(path).is_absolute():
+        return call
+    try:
+        return call.model_copy(update={"path": ws.rel(ws.resolve(path))})
+    except ToolError:
+        return call  # outside the workspace: it will fail with its own error
 
 
 def clip(text: str, limit: int = 4000) -> str:
@@ -142,12 +166,13 @@ class WriteFile(_Tool):
 
     def preview(self, ws):
         p = ws.resolve(self.path)
+        warn = TEST_WARNING + "\n" if is_test_path(self.path) else ""
         if p.is_file():
             try:
-                return _diff(p.read_text(), self.content, self.path)
+                return warn + _diff(p.read_text(), self.content, self.path)
             except UnicodeDecodeError:
-                return "(overwrites a binary file)"
-        return _diff("", self.content, self.path)
+                return warn + "(overwrites a binary file)"
+        return warn + _diff("", self.content, self.path)
 
     def preflight(self, ws):
         try:
@@ -196,7 +221,7 @@ class EditFile(_Tool):
             before, after = self._apply(ws)
         except ToolError as e:
             return f"(this edit will fail: {e})"
-        return _diff(before, after, self.path)
+        return (TEST_WARNING + "\n" if is_test_path(self.path) else "") + _diff(before, after, self.path)
 
     def run(self, ws):
         _, after = self._apply(ws)

@@ -422,3 +422,48 @@ def test_an_edit_that_can_succeed_is_still_asked(ws):
     c = Scripted(step("edit_file", path="a.py", old="a - b", new="a + b"), step("finish", message="ok"))
     run(Agent(c, ws), approve=lambda s, p: asked.append(s) or True)
     assert asked == ["edit_file a.py"]
+
+
+# -- paths shown relative to the workspace; test-file edits flagged ------------------------------------------
+
+def test_absolute_paths_inside_the_workspace_become_relative(ws):
+    from wombat_harness.agent.tools import EditFile, relativize
+
+    abs_path = str(ws.root / "a.py")
+    assert relativize(EditFile(tool="edit_file", path=abs_path, old="x", new="y"), ws).path == "a.py"
+    assert relativize(EditFile(tool="edit_file", path="a.py", old="x", new="y"), ws).path == "a.py"  # already relative
+    assert relativize(EditFile(tool="edit_file", path="/etc/passwd", old="x", new="y"), ws).path == "/etc/passwd"  # outside: untouched
+    assert relativize(EditFile(tool="edit_file", path="../x.py", old="x", new="y"), ws).path == "../x.py"
+    assert relativize(ListDir(tool="list_dir", path=str(ws.root)), ws).path == "."
+    from wombat_harness.agent.tools import Bash
+    cmd = Bash(tool="bash", command="ls")
+    assert relativize(cmd, ws) == cmd  # tools without a path are unchanged
+
+
+def test_the_person_sees_short_paths_even_when_the_model_sends_absolute_ones(ws):
+    asked = []
+    c = Scripted(step("edit_file", path=str(ws.root / "a.py"), old="a - b", new="a + b"), step("finish", message="ok"))
+    run(Agent(c, ws), approve=lambda s, p: asked.append((s, p)) or True)
+    summary, preview = asked[0]
+    assert summary == "edit_file a.py" and "--- a/a.py" in preview and str(ws.root) not in preview + summary
+
+
+@pytest.mark.parametrize("path,flagged", [
+    ("test_calc.py", True), ("calc_test.py", True), ("conftest.py", True), ("tests/helpers.py", True),
+    ("src/tests/x.py", True), ("web/app.test.ts", True), ("web/app.spec.js", True),
+    ("calc.py", False), ("latest.py", False), ("contest.py", False), ("src/attestation.py", False),
+])
+def test_test_file_edits_are_flagged(ws, path, flagged):
+    from wombat_harness.agent.tools import EditFile, is_test_path
+
+    assert is_test_path(path) is flagged
+    (ws.root / path).parent.mkdir(parents=True, exist_ok=True)
+    (ws.root / path).write_text("a - b\n")
+    preview = EditFile(tool="edit_file", path=path, old="a - b", new="a + b").preview(ws)
+    assert preview.startswith("⚠") is flagged
+
+
+def test_the_prompts_tell_the_model_not_to_edit_tests_to_make_them_pass(ws):
+    from wombat_harness.agent.loop import SYSTEM
+
+    assert "not the tests" in SYSTEM

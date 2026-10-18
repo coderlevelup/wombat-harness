@@ -540,3 +540,17 @@ def test_an_edit_that_can_succeed_is_still_asked(ws):
     s = Script(call("edit_file", path="a.py", old="a - b", new="a + b"), say("ok"))
     run(s, ws, approve=lambda sm, pv: asked.append(sm) or True)
     assert asked == ["edit_file a.py"]
+
+
+def test_the_person_sees_short_paths_even_when_the_model_sends_absolute_ones(ws):
+    asked = []
+    s = Script(call("edit_file", path=str(ws.root / "a.py"), old="a - b", new="a + b"), say("ok"))
+    run(s, ws, approve=lambda sm, pv: asked.append((sm, pv)) or True)
+    summary, preview = asked[0]
+    assert summary == "edit_file a.py" and "--- a/a.py" in preview and str(ws.root) not in preview + summary
+
+
+def test_the_pai_instructions_tell_the_model_not_to_edit_tests_to_make_them_pass():
+    from wombat_harness.agent_pai.engine import INSTRUCTIONS
+
+    assert "not the tests" in INSTRUCTIONS

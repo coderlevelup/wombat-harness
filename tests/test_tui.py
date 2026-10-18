@@ -366,3 +366,20 @@ async def test_escape_at_a_fix_prompt_fails_it_and_stops_the_turn(tmp_path):
         await settle(app, pilot)
         assert seen == {"choice": Fix.FAIL, "stopped": True}
         assert app.state is ChatState.IDLE and "interrupted" in transcript(app)
+
+
+async def test_approval_bar_warns_when_a_test_file_is_being_changed(tmp_path):
+    def script(a, text, on_event, approve, should_stop):
+        approve("edit_file test_calc.py", "⚠ this changes a test file\n--- a/test_calc.py\n+++ b/test_calc.py\n-assert x == 3\n+assert x == 1")
+        return ""
+
+    app = ChatApp(FakeAgent(tmp_path, script))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "go")
+        await pilot.pause()
+        try:
+            bar = str(app.query_one("#approval").render())
+            assert "test file" in bar and "y" in bar
+        finally:
+            await pilot.press("n")  # always release the blocked worker, so a failing assertion can't hang the app
+            await settle(app, pilot)

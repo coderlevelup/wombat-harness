@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from ..client import ChatClient, LLMError, LLMRequestError
 from .missing import Fix, Missing, describe, detect_missing
-from .tools import Bash, Finish, Step, ToolError, clip
+from .tools import Bash, Finish, Step, ToolError, clip, relativize
 from .workspace import Workspace
 
 SYSTEM = """\
@@ -27,7 +27,7 @@ Reply ONLY with JSON: {"thought": "...", "action": {"tool": "<name>", ...argumen
 - bash(command): run a shell command in the project directory
 - finish(message): you are done; `message` is your answer to the user
 
-Rules: read files before editing them. Prefer edit_file for small changes. Do not try to install packages: if a command isn't installed, the user is asked to fix it. Verify your work \
+Rules: read files before editing them. Prefer edit_file for small changes. Fix the code, not the tests: don't change a test to make it pass unless the user asks. Do not try to install packages: if a command isn't installed, the user is asked to fix it. Verify your work \
 (e.g. `python -m pytest -q` via bash; never run a .py test file with bash directly). Paths are relative to the project directory. When the task is \
 done, or the user only asked a question, call finish.
 
@@ -189,7 +189,7 @@ class Agent:
             if step.thought.strip():
                 on_event(Event(kind="thought", text=step.thought.strip()))
 
-            call = step.action
+            call = relativize(step.action, self.workspace)
             if isinstance(call, Finish):
                 on_event(Event(kind="reply", text=call.message))
                 return call.message
