@@ -153,37 +153,40 @@ class PydanticAIAgent:
         return clip(output)
 
     def _build(self, model: Model | str) -> Agent:
+        # sequential=True on every tool: a model may batch dependent calls (edit_file + bash pytest) in one
+        # response and pydantic-ai runs a batch concurrently by default, so the tests could run before the edit
+        # lands. The builtin engine takes one action at a time; this keeps the same ordering.
         # retries=3 matches the builtin engine's tolerance for bad replies (pydantic-ai's default of 1
         # gives up after a single malformed tool call).
         agent = Agent(model, instructions=self._instructions, output_type=[str, DeferredToolRequests],
                       model_settings={"temperature": 0.2}, retries=3)
 
-        @agent.tool
+        @agent.tool(sequential=True)
         def list_dir(ctx: RunContext, path: str = ".") -> str:
             """List a directory."""
             return self._run(ctx, ListDir(tool="list_dir", path=path))
 
-        @agent.tool
+        @agent.tool(sequential=True)
         def read_file(ctx: RunContext, path: str) -> str:
             """Read a file, with line numbers."""
             return self._run(ctx, ReadFile(tool="read_file", path=path))
 
-        @agent.tool
+        @agent.tool(sequential=True)
         def grep(ctx: RunContext, pattern: str, path: str = ".") -> str:
             """Regex search in the files under path."""
             return self._run(ctx, Grep(tool="grep", pattern=pattern, path=path))
 
-        @agent.tool
+        @agent.tool(sequential=True)
         def write_file(ctx: RunContext, path: str, content: str) -> str:
             """Create or overwrite a file with its COMPLETE content."""
             return self._run(ctx, WriteFile(tool="write_file", path=path, content=content))
 
-        @agent.tool
+        @agent.tool(sequential=True)
         def edit_file(ctx: RunContext, path: str, old: str, new: str) -> str:
             """Replace exactly one occurrence of `old` with `new` in a file."""
             return self._run(ctx, EditFile(tool="edit_file", path=path, old=old, new=new))
 
-        @agent.tool
+        @agent.tool(sequential=True)
         def bash(ctx: RunContext, command: str) -> str:
             """Run a shell command in the project directory."""
             return self._run(ctx, Bash(tool="bash", command=command))

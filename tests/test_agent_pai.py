@@ -355,3 +355,32 @@ def test_invalid_replies_counted():
     client = PydanticAIClient(pai_model=bad.model)
     client.complete([{"role": "user", "content": "x"}], Step)
     assert client.invalid_replies == 1
+
+
+# -- parallel tool calls: dependent calls in one response must not race -----------------------------
+
+def test_dependent_tool_calls_in_one_response_run_in_order(ws, monkeypatch):
+    """A model may batch `edit_file` and `bash pytest` into ONE response. pydantic-ai runs a batch's tool
+    calls concurrently by default, so the tests could run before the edit lands and report stale results.
+    The builtin engine is one action per step; the pydantic-ai engine must not be weaker than that."""
+    import time
+
+    from wombat_harness.agent.tools import Bash, EditFile
+
+    order = []
+    real_edit = EditFile.run
+
+    def slow_edit(self, w):
+        time.sleep(0.3)  # long enough that an unordered bash call would finish first
+        out = real_edit(self, w)
+        order.append("edit_done")
+        return out
+
+    monkeypatch.setattr(EditFile, "run", slow_edit)
+    monkeypatch.setattr(Bash, "run", lambda self, w: order.append("bash_ran") or "exit code 0")
+    batch = ModelResponse(parts=[
+        ToolCallPart("edit_file", {"path": "a.py", "old": "a - b", "new": "a + b"}, tool_call_id="e1"),
+        ToolCallPart("bash", {"command": "python -m pytest -q"}, tool_call_id="b1"),
+    ])
+    run(Script(batch, say("done")), ws, policy=Policy.YOLO)
+    assert order == ["edit_done", "bash_ran"]

@@ -66,3 +66,24 @@ wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y
 Architecture: `wombat_harness/agent` is the engine (no UI imports); `wombat_harness/tui` talks to it only
 through the `AgentPort` protocol. A turn runs in a Textual thread worker that only posts messages.
 Tests drive the UI headlessly with `App.run_test()` and a fake agent (`tests/test_tui.py`).
+
+## Engines and providers
+
+Three engines run the same agent behind one interface (`--engine` on `wombat-agent` and `wombat-tui`):
+
+| Engine | What it is | Use it for |
+|---|---|---|
+| `builtin` (default) | own loop + own HTTP client; the action is a pydantic discriminated union sent as a JSON schema | local models on Ollama; no extra dependencies |
+| `pai-native` | the same loop, with pydantic-ai as the model client (`NativeOutput`) | switching providers; works on models without tool support |
+| `pai-tools` | a pydantic-ai `Agent` with native function tools and deferred approvals | models that are good at tool calling (worked on Haiku; failed on 4b-8b Ollama models) |
+
+```
+pip install -e '.[pydantic-ai]'
+wombat-agent "fix the failing test" --engine pai-native --model gemma3:4b                 # Ollama (default)
+WOMBAT_ANTHROPIC_API_KEY=... wombat-agent "..." --engine pai-tools --model anthropic:claude-haiku-5-5
+```
+
+`--model` takes `provider:name` (`ollama` or `anthropic`); a bare name is an Ollama tag. The Anthropic key is read
+**only** from `WOMBAT_ANTHROPIC_API_KEY`, and the endpoint is always passed explicitly, so `ANTHROPIC_API_KEY` /
+`ANTHROPIC_BASE_URL` set for some other tool in your environment are ignored. Results, and how much to trust
+them, are in `reports/` (start with `2026-10-18-pydantic-ai-engines.md`).

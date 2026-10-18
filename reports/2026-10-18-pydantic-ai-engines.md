@@ -4,6 +4,9 @@ Issue #9. Question: should the agent be built on pydantic-ai? Two engines were a
 `AgentPort` and run on the same task with three local models. Single hand-run experiments on one
 tiny task, **not a benchmark**.
 
+> **Update:** the `pai-tools` result below is for small Ollama models. On `claude-haiku-5-5` it succeeded 10 of 10 runs
+> (see `2026-10-18-pai-tools-haiku.md`), and that run also found and fixed a tool-ordering race in the engine.
+
 ## Summary
 
 - **`builtin` and `pai-native` were equally reliable: 6 of 6 runs succeeded** (3 models each).
