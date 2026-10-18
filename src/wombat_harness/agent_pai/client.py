@@ -35,8 +35,8 @@ def describe_model_error(e: Exception, model: str, base_url: str) -> str:
     """One readable line for a failed model call (shared by both pydantic-ai engines)."""
     if isinstance(e, ModelHTTPError):
         body = e.body
-        err = body.get("error") if isinstance(body, dict) else None
-        detail = (err.get("message", "") if isinstance(err, dict) else str(err or body or "")).strip()
+        err = body.get("error", body) if isinstance(body, dict) else body  # the openai SDK unwraps "error"
+        detail = (err.get("message", "") if isinstance(err, dict) else str(err or "")).strip()
         msg = f"model server returned {e.status_code}" + (f": {detail}" if detail else "")
         model = e.model_name or model
         low = detail.lower()

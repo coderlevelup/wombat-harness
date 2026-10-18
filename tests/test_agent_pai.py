@@ -162,10 +162,14 @@ def test_missing_model_error_is_readable(ws):
     assert "404" in ev[0].text and "not found" in ev[0].text and "ollama pull nope:1b" in ev[0].text
 
 
-def test_no_tool_support_error_points_at_the_native_engine(ws):
-    err = ModelHTTPError(400, "gemma3:4b", {"error": {"message": "gemma3:4b does not support tools"}})
-    _, _, ev = run(Script(err), ws)
+@pytest.mark.parametrize("body", [
+    {"error": {"message": "gemma3:4b does not support tools"}},          # wrapped
+    {"message": "gemma3:4b does not support tools", "type": "invalid_request_error"},  # what the openai SDK gives
+])
+def test_no_tool_support_error_points_at_the_native_engine(ws, body):
+    _, _, ev = run(Script(ModelHTTPError(400, "gemma3:4b", body)), ws)
     assert "does not support tools" in ev[0].text and "pai-native" in ev[0].text
+    assert "{" not in ev[0].text  # no raw dict repr
 
 
 # -- the client adapter (pai-native) ----------------------------------------------------------
