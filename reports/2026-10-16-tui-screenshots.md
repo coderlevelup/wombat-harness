@@ -89,6 +89,6 @@ small to complete the task (see the results report).
   earlier identical run and 71 s on the final one).
 - Everything on screen is the model's own wording, including its "Oh dear!".
 - The Mac screenshot the author sent is not reproduced here; it is described in problem 2.
-- The author also reports a successful run on their Mac from earlier, before the later changes: `gemma3:1b` through
-  `wombat-tui` on the same bug-fix task (self-reported; the exact commit and timing were not recorded, and no screenshot
-  of it is included).
+- The author also ran `wombat-tui` with `gemma3:1b` on their Mac, earlier, on the same bug-fix task: the client ran, but the
+  model did not complete the task (self-reported; how it failed, and the exact commit, were not recorded, and no screenshot of it
+  is included).

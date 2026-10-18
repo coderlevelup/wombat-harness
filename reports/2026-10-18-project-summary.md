@@ -30,7 +30,7 @@ Strength: **solid** = reproduced several times or enforced by a test; **suggesti
 | Finding | Strength | Where |
 |---|---|---|
 | Constraining the *output schema* beats asking a small model to fill a flat schema: an all-optional flat schema let a 1.5b model call `edit_file` with no arguments 25 times; an all-required one made it invent values; a discriminated union gave clean, tool-specific output | suggestive (6 samples per schema, plus the agent runs) | `2026-10-16-local-model-results.md` §2-3 |
-| Model size matters a lot: `qwen2.5-coder:1.5b` finds the bug but cannot verify and loops; 4b-8b models complete the task. **But size is not the whole story:** the author reports `gemma3:1b` completing the task in the TUI, so model family matters too | single run per model; the `gemma3:1b` result is self-reported | `2026-10-16-local-model-results.md`, `2026-10-18-pydantic-ai-engines.md` |
+| Model size matters a lot: `qwen2.5-coder:1.5b` finds the bug but cannot verify and loops; 4b-8b models complete the task. The author's own `gemma3:1b` run in the TUI ran but did not complete the task, which points the same way | single run per model; the `gemma3:1b` result is self-reported with no detail |
 | Gemma 3 4b works with the schema-constrained engines; Ollama refuses tools for it outright (`400`) | solid for the refusal; suggestive for the rest | `2026-10-18-pydantic-ai-engines.md` |
 | `builtin` and `pai-native` were equally reliable on 3 local models (6 of 6) | suggestive | `2026-10-18-pydantic-ai-engines.md` |
 | `pai-tools` (native tool calling) failed on small Ollama models: prose instead of an edit, bad tool arguments, or the call returned as plain text (0 of 7 on Llama 3.1 8b) | suggestive | `2026-10-18-pydantic-ai-engines.md` |
@@ -59,14 +59,14 @@ arguments in the Llama failures, "failed 0 of 7", the effect of a warning on the
 
 ## 4. What we don't know
 
-- **How well `wombat-tui` works for a person on a real project.** The author reports a **successful run on their Mac, with
-  `gemma3:1b`**, on the same task as the reports ("The test in test_calc.py is failing. Find the bug in calc.py and fix it,
-  then run the tests.", workspace `/tmp/wombat-demo`). It was **earlier, before the pydantic-ai work and the later changes**: the
-  install was the branch as it stood then (`pip install -e '.[tui]'`, no pydantic-ai extra, so by inference the `builtin` engine and
-  the default Ollama endpoint). It is self-reported, one run; the exact commit, timing, number of steps, and anything that felt rough
-  were not recorded. It does not confirm the current branch. Everything else about the UI with a real model comes from a script
-  driving Textual's test harness. One reported run on a tiny task says it can work, not that it is pleasant, and not that it still
-  works now.
+- **How well `wombat-tui` works for a person on a real project.** The author ran it on their Mac with `gemma3:1b`, on the same
+  task as the reports ("The test in test_calc.py is failing. Find the bug in calc.py and fix it, then run the tests.", workspace
+  `/tmp/wombat-demo`): **the client ran, but the model did not complete the task** (self-reported; how it went wrong, how many
+  steps, and what it did were not recorded). This was **earlier, before the pydantic-ai work and the later changes**, from the
+  branch as it stood then (`pip install -e '.[tui]'`, no pydantic-ai extra, so by inference the `builtin` engine and the default
+  Ollama endpoint); the exact commit was not recorded. It shows the UI can launch and talk to a local model on a Mac. It does
+  not show the task getting done, and it does not confirm the current branch. Everything else about the UI with a real model
+  comes from a script driving Textual's test harness.
 - **Anything larger than a one-line bug fix.** Multi-file edits, long sessions, long histories (context trimming has never been
   exercised against a real long session), and bigger models.
 - **Whether Anthropic's schema rewrite matters** (#11): the system prompt also names the tools, so Haiku may succeed regardless.
@@ -86,9 +86,8 @@ arguments in the Llama failures, "failed 0 of 7", the effect of a warning on the
 ## 6. Next steps (none started)
 
 1. Merge PR #10 after review.
-2. Record the rest of the earlier `gemma3:1b` Mac run (commit, timing, steps, rough edges), run `gemma3:1b` through the drivers here to see
-   whether it reproduces, then try the **current**
-   `wombat-tui` on a real project, not a toy, and report what feels wrong.
+2. Find out *how* the earlier `gemma3:1b` run failed (a transcript or screenshot would show it), run `gemma3:1b` through the drivers here to
+   see whether it reproduces, then try the **current** `wombat-tui` on a real project, not a toy, with a 4b-8b model, and report what feels wrong.
 3. #11, #12, #13 (control run, context trimming for `pai-tools`, temperature warning).
 4. A broader task set (several tasks, several sizes) so that rates, not single runs, can be reported.
 5. Streaming output, and sandboxing beyond path confinement.
