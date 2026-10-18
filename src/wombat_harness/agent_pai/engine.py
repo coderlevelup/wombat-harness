@@ -25,7 +25,7 @@ from pydantic_ai.messages import ModelRequest, TextPart, ToolCallPart, ToolRetur
 from pydantic_ai.models import Model
 
 from ..agent.loop import (
-    DENIED_NOTE, FAIL_NOTE, LOOP_AFTER, REPEAT_NOTE, Approve, Emit, Event, Policy, Resolve, needs_approval,
+    DENIED_NOTE, LOOP_AFTER, REPEAT_NOTE, Approve, Emit, Event, Policy, Resolve, fail_note, needs_approval,
 )
 from ..agent.missing import Fix, describe, detect_missing
 from ..agent.tools import Bash, EditFile, Grep, ListDir, ReadFile, ToolError, WriteFile, clip
@@ -183,7 +183,7 @@ class PydanticAIAgent:
             if self._resolve(missing, self._failures[missing.name]) is Fix.RETRY:
                 output = call.run(self.workspace)
                 continue
-            output += FAIL_NOTE
+            output += fail_note(missing)
             break
         self._emit(Event(kind="result", text=summary, detail=output, ok=ok))
         # Same stuck detection as the builtin loop: the same call getting the same result again.

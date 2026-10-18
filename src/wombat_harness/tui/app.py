@@ -182,7 +182,7 @@ class ChatApp(App):
         if self.state is not ChatState.FIXING:
             return
         self._fix_choice = Fix(choice)
-        self._write(Text("  ↻ retrying" if self._fix_choice is Fix.RETRY else "  ✗ failed: telling the model",
+        self._write(Text("  ↻ retrying" if self._fix_choice is Fix.RETRY else "  ✗ not retrying: asking the model for install steps",
                          style="green" if self._fix_choice is Fix.RETRY else "yellow"))
         self.state = ChatState.RUNNING
         self._fix_answered.set()
@@ -219,7 +219,7 @@ class ChatApp(App):
             return
         self.query_one("#approval", Static).update(Text.assemble(
             (f"{message.missing.name} is missing.  ", "bold"), ("r", "bold green"), " retry (after you fix it)   ",
-            ("f", "bold yellow"), " fail (tell the model)"))
+            ("f", "bold yellow"), " don't retry (the model suggests install steps)"))
         self.state = ChatState.FIXING
 
     # -- worker ---------------------------------------------------------------

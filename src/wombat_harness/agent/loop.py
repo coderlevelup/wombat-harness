@@ -37,7 +37,18 @@ Top level:
 
 LOOP_AFTER = 3  # the same call returning the same result this many times in one turn means the model is stuck
 REPEAT_NOTE = "\n(You have made this exact call 3 times with the same result. Try something different, or call finish.)"
-FAIL_NOTE = "\n(The user chose not to resolve this. That command is unavailable: try another approach, or call finish.)"
+def fail_note(m: Missing) -> str:
+    """What the model is told when the person presses Fail (= "I'm not retrying").
+
+    It asks for the install steps rather than another workaround: the model can propose running the install with bash
+    (the person is asked to approve) or finish with the steps so the person can run them and ask it to retry.
+    """
+    how = f" (`{m.install_hint}`)" if m.install_hint else ""
+    return (f"\n(The user did not retry. `{m.name}` is not available. Tell the user exactly what to install{how}, then either "
+            "propose running it with bash (they will be asked to approve) or call finish with those steps so they can run them "
+            "and ask you to retry. Don't try other approaches unless they ask.)")
+
+
 DENIED_NOTE = "The user denied this action. The turn has ended; wait for their next message."
 OBSERVATION = "Tool result ({tool}):\n{output}"
 ELIDED = "[earlier tool output elided to save context]"
@@ -207,7 +218,7 @@ class Agent:
                 if choice is Fix.RETRY:  # the person fixed it: run it again, and the model never sees the failure
                     output = call.run(self.workspace)
                     continue
-                output += FAIL_NOTE  # Fail: let the model see the failure and recover another way
+                output += fail_note(missing)  # Fail: let the model see the failure and recover another way
                 break
             on_event(Event(kind="result", text=summary, detail=output, ok=ok))
             # Stuck detection: the same call getting the same result again. Looking at results, not just calls, catches

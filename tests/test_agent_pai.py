@@ -486,14 +486,16 @@ def test_retry_runs_the_command_again_and_the_model_never_sees_the_failure(ws, m
     assert "2 passed" in returned and "No module named" not in returned
 
 
-def test_fail_gives_the_error_back_to_the_model_to_recover(ws, monkeypatch):
+def test_fail_tells_the_model_to_suggest_the_install_steps(ws, monkeypatch):
     from wombat_harness.agent.missing import Fix
 
     scripted_bash(monkeypatch, MISSING)
-    s = Script(call("bash", command="python -m pytest -q"), say("no tests then"))
+    s = Script(call("bash", command="python -m pytest -q"), say("run: python -m pip install pytest"))
     reply, _ = run_resolving(s, ws, lambda m, n: Fix.FAIL)
-    returned = tool_returns(s)[0]
-    assert reply == "no tests then" and "No module named pytest" in returned and "chose not to resolve" in returned
+    note = tool_returns(s)[0]
+    assert reply == "run: python -m pip install pytest" and "No module named pytest" in note
+    assert "did not retry" in note and "python -m pip install pytest" in note
+    assert "propose running it with bash" in note and "call finish" in note and "ask you to retry" in note
 
 
 def test_failure_count_includes_the_models_own_retries(ws, monkeypatch):

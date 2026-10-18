@@ -331,13 +331,36 @@ def test_retry_runs_the_command_again_and_the_model_never_sees_the_failure(ws, m
     assert "2 passed" in seen_by_model and "No module named" not in seen_by_model
 
 
-def test_fail_gives_the_error_back_to_the_model_to_recover(ws, monkeypatch):
+def test_fail_tells_the_model_to_suggest_the_install_steps(ws, monkeypatch):
+    """Fail = "I'm not retrying": the model is told what is missing and asked for the install steps, which it can propose
+    to run (the person approves) or give as text for the person to run themselves before asking it to retry."""
     scripted_bash(monkeypatch, MISSING)
-    c = Scripted(step("bash", command="python -m pytest -q"), step("finish", message="no tests then"))
+    c = Scripted(step("bash", command="python -m pytest -q"), step("finish", message="run: python -m pip install pytest"))
     reply, ev = run_with(Agent(c, ws, Policy.YOLO), lambda m, n: Fix.FAIL)
-    assert reply == "no tests then"
+    assert reply == "run: python -m pip install pytest"
     note = c.seen[1][-1]["content"]
-    assert "No module named pytest" in note and "chose not to resolve" in note  # original failure + why
+    assert "No module named pytest" in note  # the original failure is still there
+    assert "did not retry" in note and "python -m pip install pytest" in note  # told what to suggest, with the sure hint
+    assert "propose running it with bash" in note and "call finish" in note and "ask you to retry" in note
+
+
+def test_fail_note_for_a_plain_missing_command_does_not_guess_an_installer(ws, monkeypatch):
+    scripted_bash(monkeypatch, "exit code 127\nbash: line 1: ruff: command not found")
+    c = Scripted(step("bash", command="ruff check ."), step("finish", message="x"))
+    run_with(Agent(c, ws, Policy.YOLO), lambda m, n: Fix.FAIL)
+    note = c.seen[1][-1]["content"]
+    assert "ruff" in note and "did not retry" in note and "pip install" not in note
+
+
+def test_a_retry_asked_for_in_the_next_message_just_works(ws, monkeypatch):
+    """The 'copy the steps, run them yourself, tell it to retry' path: the next turn re-runs the command."""
+    scripted_bash(monkeypatch, MISSING, WORKED)
+    c = Scripted(step("bash", command="python -m pytest -q"), step("finish", message="install pytest, then ask me to retry"),
+                 step("bash", command="python -m pytest -q"), step("finish", message="passes now"))
+    agent = Agent(c, ws, Policy.YOLO)
+    run_with(agent, lambda m, n: Fix.FAIL)
+    reply, _ = run_with(agent, None, text="installed it, retry")
+    assert reply == "passes now" and "2 passed" in agent.messages[-2]["content"]
 
 
 def test_failure_count_includes_the_models_own_retries(ws, monkeypatch):
