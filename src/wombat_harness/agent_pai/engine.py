@@ -62,6 +62,7 @@ class PydanticAIAgent:
         self._recent: deque[str] = deque(maxlen=2)
         self._loop = asyncio.new_event_loop()  # one loop for the engine's lifetime: the HTTP client is reused
         self._model_name = getattr(model, "model_name", str(model))
+        self._provider = "anthropic" if getattr(model, "system", "") == "anthropic" else "ollama"
         self._base_url = getattr(getattr(model, "client", None), "base_url", "the model server")
         self._agent = self._build(model)
         self.reset()
@@ -83,7 +84,7 @@ class PydanticAIAgent:
                            text=f"stopped after {self.max_steps} steps without finishing"))
         except (ModelHTTPError, ModelAPIError) as e:
             on_event(Event(kind="error", ok=False,
-                           text=describe_model_error(e, self._model_name, str(self._base_url))))
+                           text=describe_model_error(e, self._model_name, str(self._base_url), self._provider)))
         except UnexpectedModelBehavior as e:
             on_event(Event(kind="error", text="model reply was invalid", detail=str(e), ok=False))
         return ""

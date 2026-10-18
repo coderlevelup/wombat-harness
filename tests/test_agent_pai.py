@@ -294,3 +294,64 @@ def test_engine_survives_being_called_from_different_threads(ws, chat_server):
     agent = PydanticAIAgent(_http_model(base_url), ws)
     results, errors = _from_threads(lambda: agent.run_turn("hi", lambda e: None, lambda a, b: True), n=4)
     assert not errors and results == ["hello"] * 4
+
+
+# --- provider selection (no network: only constructs clients) -----------------------------------
+
+SECRET = "sk-ant-test-SECRET-123"
+
+
+def test_build_model_anthropic_targets_api_host_ignoring_env_url(monkeypatch):
+    from wombat_harness.agent_pai.client import build_model
+
+    monkeypatch.setenv("WOMBAT_ANTHROPIC_API_KEY", SECRET)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://container-proxy.invalid")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-other")
+    m = build_model("anthropic:claude-haiku-5-5", None)
+    assert m.model_name == "claude-haiku-5-5"
+    assert str(m.client.base_url).startswith("https://api.anthropic.com")
+    assert m.client.api_key == SECRET  # the WOMBAT_ variable, not ANTHROPIC_API_KEY
+
+
+def test_build_model_anthropic_without_key_names_variable_not_value(monkeypatch):
+    from wombat_harness.agent_pai.client import build_model
+
+    monkeypatch.delenv("WOMBAT_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)  # must not be used as a fallback
+    with pytest.raises(SystemExit) as e:
+        build_model("anthropic:claude-haiku-5-5", None)
+    assert "WOMBAT_ANTHROPIC_API_KEY" in str(e.value) and SECRET not in str(e.value)
+
+
+def test_build_model_ollama_default_and_bare_tag():
+    from wombat_harness.agent_pai.client import build_model
+
+    m = build_model("qwen2.5-coder:7b", None)
+    assert m.model_name == "qwen2.5-coder:7b" and "localhost:11434" in str(m.client.base_url)
+
+
+def test_client_ollama_default_not_applied_to_anthropic(monkeypatch):
+    monkeypatch.setenv("WOMBAT_ANTHROPIC_API_KEY", SECRET)
+    c = PydanticAIClient("anthropic:claude-haiku-5-5")
+    assert c.base_url == "https://api.anthropic.com"
+
+
+def test_error_text_is_provider_aware():
+    from wombat_harness.agent_pai.client import describe_model_error
+
+    msg = describe_model_error(ConnectionError("boom"), "claude-haiku-5-5", "https://api.anthropic.com", "anthropic")
+    assert "Ollama" not in msg and "api.anthropic.com" in msg
+
+
+def test_factory_rejects_provider_prefix_for_builtin():
+    from wombat_harness.agent.factory import make_agent
+
+    with pytest.raises(SystemExit):
+        make_agent("builtin", "anthropic:claude-haiku-5-5", None, ".", Policy.YOLO, 3)
+
+
+def test_invalid_replies_counted():
+    bad = Script(say("not json"), step_json("list_dir"))
+    client = PydanticAIClient(pai_model=bad.model)
+    client.complete([{"role": "user", "content": "x"}], Step)
+    assert client.invalid_replies == 1
