@@ -59,9 +59,11 @@ arguments in the Llama failures, "failed 0 of 7", the effect of a warning on the
 
 ## 4. What we don't know
 
-- **How well `wombat-tui` works for a person on a real project.** The author ran it on their Mac with `gemma3:1b`, on the same
-  task as the reports ("The test in test_calc.py is failing. Find the bug in calc.py and fix it, then run the tests.", workspace
-  `/tmp/wombat-demo`): **the client ran, but the model did not complete the task** (self-reported; how it went wrong, how many
+- **How well `wombat-tui` works for a person on a real project.** The author ran it on their Mac with `gemma3:1b`, with the same
+  prompt as the reports ("The test in test_calc.py is failing. Find the bug in calc.py and fix it, then run the tests.") but a
+  **smaller project than the reports' drivers use**: workspace `/tmp/wombat-demo`, `calc.py` containing only
+  `def add(a, b): return a - b`, `test_calc.py` with the single test `assert add(1, 2) == 3` (the drivers' project also has `mul`
+  and a second test): **the client ran, but the model did not complete the task** (self-reported; how it went wrong, how many
   steps, and what it did were not recorded). This was **earlier, before the pydantic-ai work and the later changes**, from the
   branch as it stood then (`pip install -e '.[tui]'`, no pydantic-ai extra, so by inference the `builtin` engine and the default
   Ollama endpoint); the exact commit was not recorded. It shows the UI can launch and talk to a local model on a Mac. It does
