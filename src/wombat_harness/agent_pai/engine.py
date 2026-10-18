@@ -152,8 +152,10 @@ class PydanticAIAgent:
         return clip(output)
 
     def _build(self, model: Model | str) -> Agent:
+        # retries=3 matches the builtin engine's tolerance for bad replies (pydantic-ai's default of 1
+        # gives up after a single malformed tool call).
         agent = Agent(model, instructions=self._instructions, output_type=[str, DeferredToolRequests],
-                      model_settings={"temperature": 0.2})
+                      model_settings={"temperature": 0.2}, retries=3)
 
         @agent.tool
         def list_dir(ctx: RunContext, path: str = ".") -> str:

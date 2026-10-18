@@ -45,14 +45,14 @@ def run_one(engine: str, model: str) -> dict:
         secs = round(time.time() - t0, 1)
         tests = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
                                cwd=root, capture_output=True, text=True)
-        errors = [e.text for e in events if e.kind == "error"]
+        errors = [e.text + (f" :: {e.detail[:300]}" if e.detail else "") for e in events if e.kind == "error"]
         return {
             "engine": engine, "model": model, "secs": secs,
             "success": tests.returncode == 0 and bool(reply) and not crash,
             "tests_pass": tests.returncode == 0, "replied": bool(reply),
             "tool_calls": sum(e.kind == "tool" for e in events),
             "tools": [e.text for e in events if e.kind == "tool"],
-            "errors": errors, "crash": crash, "reply": reply[:200],
+            "errors": errors, "crash": crash, "reply": reply[:300],
         }
 
 
