@@ -86,6 +86,7 @@ not a clean model-only comparison.
 
 ## Caveats
 
+- **Model size is not the whole story.** After this report the author reported (self-reported, one run) `gemma3:1b` completing this task in the TUI on a Mac, while `qwen2.5-coder:1.5b` looped here. The family matters, not just the parameter count.
 - n = 1 per configuration (2 for the Gemma TUI run); one tiny task; two model families. Do not read rates into any of this, or rank the models from them.
 - Ollama's default context window is small and truncates silently. The agent keeps prompts under
   ~16k characters by trimming, but `OLLAMA_CONTEXT_LENGTH` was not raised for these runs. Raising it
