@@ -147,7 +147,7 @@ def test_ask_policy_gates_writes_and_denial_is_reported(ws):
     assert asked and "+    return a + b" in asked[0][1]
     assert "a - b" in (ws.root / "a.py").read_text()  # untouched
     assert any(e.kind == "denied" for e in ev)
-    assert "denied" in c.seen[1][-1]["content"]
+    assert reply == "" and len(c.steps) == 1  # the turn ended at the denial: the model was not asked again
 
 
 def test_policies(ws):
@@ -238,3 +238,31 @@ def test_request_error_ends_turn_immediately_with_the_real_message(ws):
     reply, ev = run(Agent(c, ws))
     assert reply == "" and len(ev) == 1 and ev[0].kind == "error" and "ollama pull x" in ev[0].text
     assert len(c.steps) == 1  # no retries
+
+
+def test_denial_ends_the_turn_and_the_next_message_steers_the_model(ws):
+    """Denying must hand control back to the person, not let the model carry on with its next action
+    (it can't ask a question mid-turn: only `finish` ends a turn)."""
+    c = Scripted(step("edit_file", path="a.py", old="a - b", new="a + b"),
+                 step("finish", message="ok, leaving it"))
+    agent = Agent(c, ws)
+    ev = []
+    reply = agent.run_turn("fix it", ev.append, lambda s, p: False)
+    assert reply == "" and [e.kind for e in ev] == ["thought", "denied"]
+    assert len(c.steps) == 1 and not c.seen[1:]  # no second model call in the denied turn
+
+    reply2, ev2 = run(agent, "do nothing, just explain it")  # the person's next message
+    assert reply2 == "ok, leaving it"
+    history = [(m["role"], m["content"][:60]) for m in c.seen[1]]
+    roles = [r for r, _ in history]
+    assert roles == ["system", "user", "assistant", "user", "user"]
+    assert "denied" in history[3][1] and "turn has ended" in c.seen[1][3]["content"]
+    assert c.seen[1][4]["content"] == "do nothing, just explain it"
+
+
+def test_denial_note_does_not_tell_the_model_to_ask_a_question(ws):
+    c = Scripted(step("bash", command="rm -rf x"), step("finish", message="x"))
+    a = Agent(c, ws)
+    a.run_turn("go", lambda e: None, lambda s, p: False)
+    note = a.messages[-1]["content"]
+    assert "denied" in note and "ask" not in note.lower()

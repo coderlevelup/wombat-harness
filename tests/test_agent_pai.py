@@ -76,12 +76,50 @@ def test_ask_policy_gates_edit_with_diff_preview(ws):
     assert [e.kind for e in ev] == ["tool", "result", "reply"]
 
 
-def test_denial_leaves_file_untouched_and_tells_the_model(ws):
-    s = Script(call("edit_file", path="a.py", old="a - b", new="a + b"), say("ok, not editing"))
-    _, reply, ev = run(s, ws, approve=lambda sm, pv: False)
-    assert "a - b" in (ws.root / "a.py").read_text()
-    assert [e.kind for e in ev] == ["denied", "reply"]
-    assert "denied" in tool_returns(s)[0]
+def test_denial_ends_the_turn_and_the_next_message_steers_the_model(ws):
+    s = Script(call("edit_file", path="a.py", old="a - b", new="a + b"), say("ok, leaving it"))
+    agent = PydanticAIAgent(s.model, ws)
+    ev = []
+    reply = agent.run_turn("fix it", ev.append, lambda sm, pv: False)
+    assert "a - b" in (ws.root / "a.py").read_text()  # untouched
+    assert reply == "" and [e.kind for e in ev] == ["denied"]
+    assert len(s.seen) == 1  # the model was not asked again in the denied turn
+
+    ev2 = []
+    reply2 = agent.run_turn("just explain it", ev2.append, lambda sm, pv: True)
+    assert reply2 == "ok, leaving it"
+    # the pending edit was closed with a denial result, and the new message rides in the same request
+    last_request = s.seen[1][-1]
+    kinds = [type(p).__name__ for p in last_request.parts]
+    assert kinds == ["ToolReturnPart", "UserPromptPart"]
+    assert "denied" in last_request.parts[0].content and "turn has ended" in last_request.parts[0].content
+    assert last_request.parts[1].content == "just explain it"
+
+
+def test_denial_in_a_batch_closes_every_pending_call(ws):
+    """Read + edit + bash in one response: the read runs, the edit is denied, the bash never runs; none is left dangling."""
+    ran = []
+    from wombat_harness.agent.tools import Bash
+
+    batch = ModelResponse(parts=[
+        ToolCallPart("read_file", {"path": "a.py"}, tool_call_id="r1"),
+        ToolCallPart("edit_file", {"path": "a.py", "old": "a - b", "new": "a + b"}, tool_call_id="e1"),
+        ToolCallPart("bash", {"command": "pytest"}, tool_call_id="b1"),
+    ])
+    s = Script(batch, say("fine"))
+    agent = PydanticAIAgent(s.model, ws)
+    Bash.run, orig = (lambda self, w: ran.append("bash") or "x"), Bash.run
+    try:
+        asked = []
+        agent.run_turn("go", lambda e: None, lambda sm, pv: asked.append(sm) or False)
+        assert asked == ["edit_file a.py"]  # stopped asking at the first denial
+        assert ran == []
+        agent.run_turn("ok", lambda e: None, lambda sm, pv: True)
+    finally:
+        Bash.run = orig
+    returns = {p.tool_call_id: p.content for p in s.seen[1][-1].parts if isinstance(p, ToolReturnPart)}
+    assert set(returns) == {"r1", "e1", "b1"}  # every call has a result
+    assert "return a - b" in returns["r1"] and "denied" in returns["e1"] and "denied" in returns["b1"]
 
 
 @pytest.mark.parametrize("policy,expected", [

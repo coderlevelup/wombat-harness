@@ -35,6 +35,7 @@ Strength: **solid** = reproduced several times or enforced by a test; **suggesti
 | `builtin` and `pai-native` were equally reliable on 3 local models (6 of 6) | suggestive | `2026-10-18-pydantic-ai-engines.md` |
 | `pai-tools` (native tool calling) failed on small Ollama models: prose instead of an edit, bad tool arguments, or the call returned as plain text (0 of 7 on Llama 3.1 8b) | suggestive | `2026-10-18-pydantic-ai-engines.md` |
 | ...but `pai-tools` succeeded 10 of 10 on Claude Haiku 5.5, and deferred approvals worked against a hosted model | suggestive (10 runs) | `2026-10-18-pai-tools-haiku.md` |
+| `gemma3:1b` does not fix the bug on `builtin` or `pai-native`: 0 of 10 genuine fixes (strict judge), plus 0 of 10 in an earlier batch; it reads the test, decides the code is fine, and edits the test or loops | suggestive (20 runs, one model, one project) | `2026-10-18-gemma3-1b.md` |
 | `pai-native` works on Anthropic: 3 of 3, no invalid replies | single batch of 3 | `2026-10-18-anthropic-live.md` |
 | pydantic-ai saved almost no code (client 89 vs 82 lines, loop 165 vs 184 without trimming) | solid (counted) | `2026-10-18-pydantic-ai-engines.md` |
 | On Anthropic, pydantic-ai rewrites our schema so tool names and `minLength` become description text, not enforced | solid (captured requests, offline) | `reports/schema_probe_providers.py` |
@@ -51,6 +52,8 @@ This is the most reusable lesson. Each of these passed tests, or would have, unt
 - **Cross-thread event loop:** the pydantic-ai client failed on its second call from a different thread (the TUI's pattern). A first test using a mock transport **passed without the fix**; only a real keep-alive local server reproduced it.
 - **Tool-ordering race:** a model batched `edit_file` and `bash pytest` into one response and pydantic-ai ran them concurrently. It surfaced only on a model that batches calls.
 - **A missing model looked like a broken app:** three retries labelled "reply was invalid" with an MDN link, found when it hit a real machine.
+- **Denying an action did not hand control back:** the model carried on with its next action and the person had no input box. Seen by the author on a real run; fixed (a denial now ends the turn).
+- **The success criterion could be satisfied by editing the test** (a 1b model did). Audited: none of 19 earlier recorded successes were affected; drivers now use a stricter judge.
 - **A display tidy-up squashed code indentation**, found in a screenshot, not a test.
 
 Mistakes of mine worth recording: I pushed a failing test once (piping pytest into `tail` hid its exit code); and
@@ -88,8 +91,8 @@ arguments in the Llama failures, "failed 0 of 7", the effect of a warning on the
 ## 6. Next steps (none started)
 
 1. Merge PR #10 after review.
-2. Find out *how* the earlier `gemma3:1b` run failed (a transcript or screenshot would show it), run `gemma3:1b` through the drivers here to
-   see whether it reproduces, then try the **current** `wombat-tui` on a real project, not a toy, with a 4b-8b model, and report what feels wrong.
+2. The `gemma3:1b` failure is understood and reproduces (`2026-10-18-gemma3-1b.md`). Next: try the **current** `wombat-tui` on a real project,
+   not a toy, with a 4b-8b model, and report what feels wrong; then the remaining harness gaps in #14.
 3. #11, #12, #13 (control run, context trimming for `pai-tools`, temperature warning).
 4. A broader task set (several tasks, several sizes) so that rates, not single runs, can be reported.
 5. Streaming output, and sandboxing beyond path confinement.

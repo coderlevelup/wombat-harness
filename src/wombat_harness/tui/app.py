@@ -216,6 +216,7 @@ class ChatApp(App):
             self._write(_result(e))
         elif e.kind == "denied":
             self._write(Text(f"✗ denied: {e.text}", style="yellow"))
+            self._write(Text("  Type what you would like instead.", style="dim"))
         elif e.kind == "reply":
             self._write(Markdown(e.text))
         elif e.kind == "error":

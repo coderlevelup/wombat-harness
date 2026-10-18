@@ -34,6 +34,7 @@ Project directory: <ROOT>
 Top level:
 <LISTING>"""
 
+DENIED_NOTE = "The user denied this action. The turn has ended; wait for their next message."
 OBSERVATION = "Tool result ({tool}):\n{output}"
 ELIDED = "[earlier tool output elided to save context]"
 
@@ -185,12 +186,12 @@ class Agent:
             summary = call.summary()
             if self._needs_approval(call):
                 if not approve(summary, call.preview(self.workspace) or ""):
-                    self._observe(call.tool, "The user denied this action. Do not retry it; ask what they want instead.")
+                    # A denial hands control back to the person. The model can't ask a question mid-turn (only
+                    # `finish` ends one), so letting it carry on just makes it guess its next action; the
+                    # person's next message steers it instead, with the denial still in the history.
+                    self._observe(call.tool, DENIED_NOTE)
                     on_event(Event(kind="denied", text=summary, ok=False))
-                    if stop():
-                        on_event(Event(kind="stopped", text="stopped"))
-                        return ""
-                    continue
+                    return ""
             on_event(Event(kind="tool", text=summary))
             try:
                 output, ok = call.run(self.workspace), True

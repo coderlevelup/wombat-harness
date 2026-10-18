@@ -21,10 +21,10 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded,
 )
-from pydantic_ai.messages import TextPart, ToolCallPart
+from pydantic_ai.messages import ModelRequest, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 
-from ..agent.loop import Approve, Emit, Event, Policy, needs_approval
+from ..agent.loop import DENIED_NOTE, Approve, Emit, Event, Policy, needs_approval
 from ..agent.tools import Bash, EditFile, Grep, ListDir, ReadFile, ToolError, WriteFile, clip
 from ..agent.workspace import Workspace
 from .client import describe_model_error
@@ -40,7 +40,7 @@ Project directory: <ROOT>
 Top level:
 <LISTING>"""
 
-DENIED = "The user denied this action. Do not retry it; ask what they want instead."
+NOT_RUN_NOTE = "Not run: the user denied an earlier action in this batch, so the turn ended."
 TOOLS = {c.model_fields["tool"].annotation.__args__[0]: c
          for c in (ListDir, ReadFile, Grep, WriteFile, EditFile, Bash)}
 
@@ -113,7 +113,11 @@ class PydanticAIAgent:
                 result = run.result
             history, usage = result.all_messages(), result.usage
             if isinstance(result.output, DeferredToolRequests):
-                deferred = self._decide(result.output, approve)
+                approvals, denied_id = self._decide(result.output, approve)
+                if denied_id:  # hand control back; see Agent.run_turn for why
+                    self._history = self._close_pending(history, result.output, denied_id)
+                    return ""
+                deferred = DeferredToolResults(approvals=approvals)
                 prompt = None
                 if stop():
                     self._emit(Event(kind="stopped", text="stopped"))
@@ -123,16 +127,35 @@ class PydanticAIAgent:
             self._emit(Event(kind="reply", text=result.output))
             return result.output
 
-    def _decide(self, requests: DeferredToolRequests, approve: Approve) -> DeferredToolResults:
-        approvals: dict[str, bool | ToolDenied] = {}
+    def _decide(self, requests: DeferredToolRequests, approve: Approve) -> tuple[dict[str, bool], str | None]:
+        """Ask for each pending approval in order, stopping at the first denial.
+
+        Returns (approvals so far, tool_call_id of the denied call or None).
+        """
+        approvals: dict[str, bool] = {}
         for part in requests.approvals:
             call = TOOLS[part.tool_name](tool=part.tool_name, **part.args_as_dict())
-            if approve(call.summary(), call.preview(self.workspace) or ""):
-                approvals[part.tool_call_id] = True
-            else:
+            if not approve(call.summary(), call.preview(self.workspace) or ""):
                 self._emit(Event(kind="denied", text=call.summary(), ok=False))
-                approvals[part.tool_call_id] = ToolDenied(DENIED)
-        return DeferredToolResults(approvals=approvals)
+                return approvals, part.tool_call_id
+            approvals[part.tool_call_id] = True
+        return approvals, None
+
+    def _close_pending(self, history: list, requests: DeferredToolRequests, denied_id: str) -> list:
+        """End the turn at a denial without leaving a tool call unanswered (providers reject that).
+
+        Every pending call in the batch gets a result: the denied one says so, the rest (including any approved
+        before the denial) say "not run", because the batch is cut off. The results go into the trailing request
+        if there is one, so the person's next message merges into the same request.
+        """
+        closing = [
+            ToolReturnPart(tool_name=p.tool_name, tool_call_id=p.tool_call_id,
+                           content=DENIED_NOTE if p.tool_call_id == denied_id else NOT_RUN_NOTE)
+            for p in requests.approvals
+        ]
+        if history and isinstance(history[-1], ModelRequest):
+            return [*history[:-1], ModelRequest(parts=[*history[-1].parts, *closing])]
+        return [*history, ModelRequest(parts=closing)]
 
     # -- tools ----------------------------------------------------------------------------
     def _run(self, ctx: RunContext, call) -> str:

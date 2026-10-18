@@ -54,6 +54,7 @@ wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y
 - **Approvals:** reads are automatic. In `ask` mode every write, edit and command shows a diff or the
   command and waits for `y` / `n` / `a` (allow everything this session). `--mode edits` auto-approves
   file edits but still asks for commands; `--mode yolo` asks for nothing. `/mode` changes it live.
+- **Denying (`n`) ends the turn** and returns you to the input box, with the denial kept in the conversation, so what you type next steers the agent instead of it guessing its next action.
 - **Keys:** Esc interrupts (cooperatively: after the current model call or command), `/clear` starts
   over, `/help`, `Ctrl+Q` quits.
 - **Why a union schema:** each step is `{thought, action}` where `action` is a pydantic discriminated

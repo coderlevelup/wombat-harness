@@ -260,3 +260,21 @@ def test_display_tidying_keeps_code_indentation():
     out = _result(Event(kind="result", text="read_file", detail=code)).plain
     assert "   2      return a - b" in out and "   3              deeper = 1" in out  # indentation intact
     assert "[1,  2]" in out  # a 40-space run is collapsed
+
+
+async def test_denial_returns_control_with_a_hint(tmp_path):
+    def script(a, text, on_event, approve, should_stop):
+        if not approve("edit_file a.py", "-x\n+y"):
+            on_event(Event(kind="denied", text="edit_file a.py", ok=False))
+        return ""
+
+    app = ChatApp(FakeAgent(tmp_path, script))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "edit it")
+        await pilot.pause()
+        await pilot.press("n")
+        await settle(app, pilot)
+        text = transcript(app)
+        assert "denied: edit_file a.py" in text and "what you would like instead" in text
+        assert app.state is ChatState.IDLE
+        assert not app.query_one("#prompt", Input).disabled and app.query_one("#prompt", Input).has_focus
