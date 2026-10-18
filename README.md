@@ -54,6 +54,7 @@ wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y
 - **Approvals:** reads are automatic. In `ask` mode every write, edit and command shows a diff or the
   command and waits for `y` / `n` / `a` (allow everything this session). `--mode edits` auto-approves
   file edits but still asks for commands; `--mode yolo` asks for nothing. `/mode` changes it live.
+- **You are only asked about actions that could happen.** An edit whose text isn't found or matches several places, or a write outside the workspace or onto a directory, is not put to you: it fails and the model gets the error.
 - **Denying (`n`) ends the turn** and returns you to the input box, with the denial kept in the conversation, so what you type next steers the agent instead of it guessing its next action.
 - **Missing tools: Retry / Fail.** If the model runs a command that isn't installed (`command not found`, or `python -m X` with no module `X`),
   wombat pauses and tells you what is missing, for which Python (its path), how to install it when that is certain, and how many times it has

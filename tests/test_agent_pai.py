@@ -513,3 +513,28 @@ def test_without_a_resolver_the_failure_goes_straight_to_the_model(ws, monkeypat
     reply, ev = run_resolving(s, ws, None)
     assert reply == "x" and not any(e.kind == "blocked" for e in ev)
     assert "No module named pytest" in tool_returns(s)[0]
+
+
+# -- actions that cannot succeed are not put to the person ---------------------------------------------------
+
+def test_edit_that_cannot_match_is_not_put_to_the_person(ws):
+    asked = []
+    s = Script(call("edit_file", path="a.py", old="NOT THERE", new="x"), say("ok"))
+    _, reply, ev = run(s, ws, approve=lambda sm, pv: asked.append(sm) or True)
+    assert asked == [] and reply == "ok"
+    assert [(e.kind, e.ok) for e in ev if e.kind == "result"] == [("result", False)]
+    assert "not found" in tool_returns(s)[0]
+
+
+def test_write_that_cannot_happen_is_not_put_to_the_person(ws):
+    asked = []
+    s = Script(call("write_file", path="../outside.py", content="x = 1\n"), say("ok"))
+    run(s, ws, approve=lambda sm, pv: asked.append(sm) or True)
+    assert asked == [] and "outside the workspace" in tool_returns(s)[0]
+
+
+def test_an_edit_that_can_succeed_is_still_asked(ws):
+    asked = []
+    s = Script(call("edit_file", path="a.py", old="a - b", new="a + b"), say("ok"))
+    run(s, ws, approve=lambda sm, pv: asked.append(sm) or True)
+    assert asked == ["edit_file a.py"]

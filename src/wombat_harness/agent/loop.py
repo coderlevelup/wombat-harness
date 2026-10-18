@@ -184,7 +184,9 @@ class Agent:
                 return call.message
 
             summary = call.summary()
-            if self._needs_approval(call):
+            # An action that is certain to fail (edit text not found / ambiguous, path outside the workspace) is not
+            # put to the person: it just runs, fails, and the model gets the error like any other tool failure.
+            if self._needs_approval(call) and call.preflight(self.workspace) is None:
                 if not approve(summary, call.preview(self.workspace) or ""):
                     # A denial hands control back to the person. The model can't ask a question mid-turn (only
                     # `finish` ends one), so letting it carry on just makes it guess its next action; the

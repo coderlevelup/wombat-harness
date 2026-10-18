@@ -166,8 +166,8 @@ class PydanticAIAgent:
 
     # -- tools ----------------------------------------------------------------------------
     def _run(self, ctx: RunContext, call) -> str:
-        if needs_approval(self.policy, call) and not ctx.tool_call_approved:
-            raise ApprovalRequired
+        if needs_approval(self.policy, call) and not ctx.tool_call_approved and call.preflight(self.workspace) is None:
+            raise ApprovalRequired  # (a call certain to fail just runs and returns the error: no point asking)
         summary = call.summary()
         self._emit(Event(kind="tool", text=summary))
         try:

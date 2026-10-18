@@ -56,6 +56,13 @@ class _Tool(BaseModel):
     def preview(self, ws: Workspace) -> str | None:
         return None
 
+    def preflight(self, ws: Workspace) -> str | None:
+        """Why this call cannot succeed (the same message `run` would give), or None if it might.
+
+        Used to skip asking a person to approve something that is certain to fail.
+        """
+        return None
+
     def run(self, ws: Workspace) -> str:
         raise NotImplementedError
 
@@ -142,6 +149,14 @@ class WriteFile(_Tool):
                 return "(overwrites a binary file)"
         return _diff("", self.content, self.path)
 
+    def preflight(self, ws):
+        try:
+            if ws.resolve(self.path).is_dir():
+                return f"{self.path} is a directory"
+        except ToolError as e:
+            return str(e)
+        return None
+
     def run(self, ws):
         p = ws.resolve(self.path)
         if p.is_dir():
@@ -168,6 +183,13 @@ class EditFile(_Tool):
         if n > 1:
             raise ToolError(f"`old` text matches {n} places in {self.path}; include more surrounding lines")
         return text, text.replace(self.old, self.new, 1)
+
+    def preflight(self, ws):
+        try:
+            self._apply(ws)
+        except ToolError as e:
+            return str(e)
+        return None
 
     def preview(self, ws):
         try:

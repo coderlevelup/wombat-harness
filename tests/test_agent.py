@@ -361,3 +361,41 @@ def test_without_a_resolver_the_failure_goes_straight_to_the_model(ws, monkeypat
 def test_only_bash_failures_can_block(ws, monkeypatch):
     c = Scripted(step("read_file", path="missing.py"), step("finish", message="x"))
     run_with(Agent(c, ws), lambda m, n: pytest.fail("resolve must not be called"))
+
+
+# -- actions that cannot succeed are not put to the person ---------------------------------------------------
+
+def test_edit_that_cannot_match_is_not_put_to_the_person(ws):
+    """The preview used to say "(this edit will fail...)" and still ask; people learned to press y on things that couldn't work."""
+    asked = []
+    c = Scripted(step("edit_file", path="a.py", old="NOT THERE", new="x"), step("finish", message="ok"))
+    reply, ev = run(Agent(c, ws), approve=lambda s, p: asked.append(s) or True)
+    assert asked == [] and reply == "ok"
+    assert [(e.kind, e.ok) for e in ev if e.kind == "result"] == [("result", False)]
+    assert "not found" in c.seen[1][-1]["content"]  # the model gets the error and can correct itself
+
+
+def test_ambiguous_edit_is_not_put_to_the_person(ws):
+    (ws.root / "dup.py").write_text("x\nx\n")
+    asked = []
+    c = Scripted(step("edit_file", path="dup.py", old="x", new="y"), step("finish", message="ok"))
+    run(Agent(c, ws), approve=lambda s, p: asked.append(s) or True)
+    assert asked == [] and "matches 2" in c.seen[1][-1]["content"]
+
+
+def test_write_that_cannot_happen_is_not_put_to_the_person(ws):
+    asked = []
+    c = Scripted(step("write_file", path="../outside.py", content="x = 1\n"),
+                 step("write_file", path="sub", content="x = 1\n"), step("finish", message="ok"))
+    (ws.root / "sub").mkdir(exist_ok=True)
+    run(Agent(c, ws), approve=lambda s, p: asked.append(s) or True)
+    assert asked == []
+    assert "outside the workspace" in c.seen[1][-1]["content"] and "is a directory" in c.seen[2][-1]["content"]
+    assert not (ws.root.parent / "outside.py").exists()
+
+
+def test_an_edit_that_can_succeed_is_still_asked(ws):
+    asked = []
+    c = Scripted(step("edit_file", path="a.py", old="a - b", new="a + b"), step("finish", message="ok"))
+    run(Agent(c, ws), approve=lambda s, p: asked.append(s) or True)
+    assert asked == ["edit_file a.py"]
