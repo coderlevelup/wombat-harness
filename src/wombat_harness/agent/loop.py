@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import Counter
 from collections.abc import Callable
 from enum import Enum
 from typing import Literal, Protocol
@@ -34,6 +34,8 @@ Project directory: <ROOT>
 Top level:
 <LISTING>"""
 
+LOOP_AFTER = 3  # the same call returning the same result this many times in one turn means the model is stuck
+REPEAT_NOTE = "\n(You have made this exact call 3 times with the same result. Try something different, or call finish.)"
 DENIED_NOTE = "The user denied this action. The turn has ended; wait for their next message."
 OBSERVATION = "Tool result ({tool}):\n{output}"
 ELIDED = "[earlier tool output elided to save context]"
@@ -144,7 +146,7 @@ class Agent:
         self._turns.append(len(self.messages))
         self.messages.append({"role": "user", "content": text})
         invalid = repeats = 0
-        recent: deque[str] = deque(maxlen=2)
+        seen: Counter[tuple[str, str]] = Counter()  # (call, result) -> times seen this turn
 
         for _ in range(self.max_steps):
             if stop():
@@ -173,16 +175,6 @@ class Agent:
                 on_event(Event(kind="reply", text=call.message))
                 return call.message
 
-            key = call.model_dump_json()
-            if list(recent) == [key, key]:  # third identical call in a row
-                repeats += 1
-                self._observe(call.tool, "error: you already did exactly this twice. Try something different, or call finish.")
-                on_event(Event(kind="error", text="model is repeating itself", ok=False))
-                if repeats >= 2:
-                    return ""
-                continue
-            recent.append(key)
-
             summary = call.summary()
             if self._needs_approval(call):
                 if not approve(summary, call.preview(self.workspace) or ""):
@@ -198,7 +190,17 @@ class Agent:
             except ToolError as e:
                 output, ok = f"error: {e}", False
             on_event(Event(kind="result", text=summary, detail=output, ok=ok))
-            self._observe(call.tool, output)
+            # Stuck detection: the same call getting the same result again. Looking at results, not just calls, catches
+            # cycles (read, failing edit, read, failing edit ...) that a "same call back to back" check misses, and
+            # doesn't fire on a legitimate re-read after the file changed, because the result differs.
+            seen[(call.model_dump_json(), output)] += 1
+            looping = seen[(call.model_dump_json(), output)] >= LOOP_AFTER
+            self._observe(call.tool, output + (REPEAT_NOTE if looping else ""))
+            if looping:
+                repeats += 1
+                on_event(Event(kind="error", text="model is repeating itself", ok=False))
+                if repeats >= 2:
+                    return ""
 
         on_event(Event(kind="error", text=f"stopped after {self.max_steps} steps without finishing", ok=False))
         return ""

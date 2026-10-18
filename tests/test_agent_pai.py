@@ -422,3 +422,25 @@ def test_dependent_tool_calls_in_one_response_run_in_order(ws, monkeypatch):
     ])
     run(Script(batch, say("done")), ws, policy=Policy.YOLO)
     assert order == ["edit_done", "bash_ran"]
+
+
+def test_repeat_guard_catches_a_two_step_cycle(ws):
+    cycle = [call("read_file", path="a.py"), call("edit_file", path="a.py", old="nope", new="x")] * 8
+    s = Script(*cycle)
+    _, reply, ev = run(s, ws, policy=Policy.YOLO, max_steps=20)
+    assert reply == "" and ev[-1].text == "model is repeating itself"
+    assert sum(e.text == "model is repeating itself" for e in ev) == 2  # warned once, then stopped; not reported thrice
+    assert len(s.responses) > 4  # stopped before the script ran out
+
+
+def test_repeat_guard_allows_rereading_after_a_change(ws):
+    s = Script(
+        call("read_file", path="a.py"),
+        call("edit_file", path="a.py", old="a - b", new="a * b"),
+        call("read_file", path="a.py"),
+        call("edit_file", path="a.py", old="a * b", new="a / b"),
+        call("read_file", path="a.py"),
+        say("done"),
+    )
+    _, reply, ev = run(s, ws, policy=Policy.YOLO)
+    assert reply == "done" and not any(e.kind == "error" for e in ev)

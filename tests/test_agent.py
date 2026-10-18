@@ -266,3 +266,27 @@ def test_denial_note_does_not_tell_the_model_to_ask_a_question(ws):
     a.run_turn("go", lambda e: None, lambda s, p: False)
     note = a.messages[-1]["content"]
     assert "denied" in note and "ask" not in note.lower()
+
+
+def test_repeat_guard_catches_a_two_step_cycle(ws):
+    """read, failing edit, read, failing edit ...: no call repeats back to back, but each one keeps returning the
+    same result. (Seen on a real run: a small model looped read_file / edit_file for the whole step budget.)"""
+    cycle = [step("read_file", path="a.py"), step("edit_file", path="a.py", old="nope", new="x")] * 8
+    c = Scripted(*cycle)
+    reply, ev = run(Agent(c, ws, max_steps=20))
+    assert reply == "" and sum(e.text == "model is repeating itself" for e in ev) == 2
+    assert len(c.steps) > 6  # stopped well before the script (and the step budget) ran out
+
+
+def test_repeat_guard_allows_rereading_after_a_change(ws):
+    """The same read three times is fine when the file changed in between: the result differs."""
+    c = Scripted(
+        step("read_file", path="a.py"),
+        step("edit_file", path="a.py", old="a - b", new="a * b"),
+        step("read_file", path="a.py"),
+        step("edit_file", path="a.py", old="a * b", new="a / b"),
+        step("read_file", path="a.py"),
+        step("finish", message="done"),
+    )
+    reply, ev = run(Agent(c, ws, Policy.YOLO))
+    assert reply == "done" and not any(e.kind == "error" for e in ev)

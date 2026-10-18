@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import deque
+from collections import Counter
 from collections.abc import Callable
 
 from pydantic_ai import (
@@ -24,7 +24,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelRequest, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 
-from ..agent.loop import DENIED_NOTE, Approve, Emit, Event, Policy, needs_approval
+from ..agent.loop import DENIED_NOTE, LOOP_AFTER, REPEAT_NOTE, Approve, Emit, Event, Policy, needs_approval
 from ..agent.tools import Bash, EditFile, Grep, ListDir, ReadFile, ToolError, WriteFile, clip
 from ..agent.workspace import Workspace
 from .client import describe_model_error
@@ -59,7 +59,8 @@ class PydanticAIAgent:
     ):
         self.workspace, self.policy, self.max_steps = workspace, policy, max_steps
         self._emit: Emit = lambda e: None
-        self._recent: deque[str] = deque(maxlen=2)
+        self._seen: Counter[tuple[str, str]] = Counter()
+        self._repeats = 0
         self._loop = asyncio.new_event_loop()  # one loop for the engine's lifetime: the HTTP client is reused
         self._model_name = getattr(model, "model_name", str(model))
         self._provider = "anthropic" if getattr(model, "system", "") == "anthropic" else "ollama"
@@ -73,7 +74,7 @@ class PydanticAIAgent:
 
     def run_turn(self, text: str, on_event: Emit, approve: Approve,
                  should_stop: Callable[[], bool] | None = None) -> str:
-        self._emit, self._recent = on_event, deque(maxlen=2)
+        self._emit, self._seen, self._repeats = on_event, Counter(), 0
         stop = should_stop or (lambda: False)
         try:
             return self._loop.run_until_complete(self._turn(text, approve, stop))
@@ -159,11 +160,6 @@ class PydanticAIAgent:
 
     # -- tools ----------------------------------------------------------------------------
     def _run(self, ctx: RunContext, call) -> str:
-        key = call.model_dump_json()
-        if list(self._recent) == [key, key]:  # third identical call in a row
-            self._recent.clear()
-            raise _Abort("model is repeating itself")
-        self._recent.append(key)
         if needs_approval(self.policy, call) and not ctx.tool_call_approved:
             raise ApprovalRequired
         summary = call.summary()
@@ -173,6 +169,15 @@ class PydanticAIAgent:
         except ToolError as e:
             output, ok = f"error: {e}", False
         self._emit(Event(kind="result", text=summary, detail=output, ok=ok))
+        # Same stuck detection as the builtin loop: the same call getting the same result again.
+        sig = (call.model_dump_json(), output)
+        self._seen[sig] += 1
+        if self._seen[sig] >= LOOP_AFTER:
+            self._repeats += 1
+            if self._repeats >= 2:
+                raise _Abort("model is repeating itself")  # run_turn reports it
+            self._emit(Event(kind="error", text="model is repeating itself", ok=False))
+            return clip(output) + REPEAT_NOTE
         return clip(output)
 
     def _build(self, model: Model | str) -> Agent:
