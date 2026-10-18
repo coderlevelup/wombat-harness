@@ -24,7 +24,10 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelRequest, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 
-from ..agent.loop import DENIED_NOTE, LOOP_AFTER, REPEAT_NOTE, Approve, Emit, Event, Policy, needs_approval
+from ..agent.loop import (
+    DENIED_NOTE, FAIL_NOTE, LOOP_AFTER, REPEAT_NOTE, Approve, Emit, Event, Policy, Resolve, needs_approval,
+)
+from ..agent.missing import Fix, describe, detect_missing
 from ..agent.tools import Bash, EditFile, Grep, ListDir, ReadFile, ToolError, WriteFile, clip
 from ..agent.workspace import Workspace
 from .client import describe_model_error
@@ -32,7 +35,7 @@ from .client import describe_model_error
 INSTRUCTIONS = """\
 You are wombat, a coding agent working in the project directory described below. Complete the \
 user's task by calling tools. Read files before editing them. Prefer edit_file for small changes. \
-Verify your work (e.g. `python -m pytest -q` via bash; never run a .py test file with bash \
+Do not try to install packages: if a command isn't installed, the user is asked to fix it. Verify your work (e.g. `python -m pytest -q` via bash; never run a .py test file with bash \
 directly). Paths are relative to the project directory. When the task is done, or the user only \
 asked a question, reply with a short plain-text answer and no tool call.
 
@@ -61,6 +64,8 @@ class PydanticAIAgent:
         self._emit: Emit = lambda e: None
         self._seen: Counter[tuple[str, str]] = Counter()
         self._repeats = 0
+        self._resolve: Resolve | None = None
+        self._failures: Counter[str] = Counter()
         self._loop = asyncio.new_event_loop()  # one loop for the engine's lifetime: the HTTP client is reused
         self._model_name = getattr(model, "model_name", str(model))
         self._provider = "anthropic" if getattr(model, "system", "") == "anthropic" else "ollama"
@@ -73,8 +78,9 @@ class PydanticAIAgent:
         self._history: list = []
 
     def run_turn(self, text: str, on_event: Emit, approve: Approve,
-                 should_stop: Callable[[], bool] | None = None) -> str:
+                 should_stop: Callable[[], bool] | None = None, resolve: Resolve | None = None) -> str:
         self._emit, self._seen, self._repeats = on_event, Counter(), 0
+        self._resolve, self._failures = resolve, Counter()
         stop = should_stop or (lambda: False)
         try:
             return self._loop.run_until_complete(self._turn(text, approve, stop))
@@ -168,6 +174,17 @@ class PydanticAIAgent:
             output, ok = call.run(self.workspace), True
         except ToolError as e:
             output, ok = f"error: {e}", False
+        # A shell command failed because a tool isn't installed: ask the person (Retry / Fail). This runs in the
+        # tool's worker thread, so waiting on them here doesn't block pydantic-ai's event loop.
+        while ok and self._resolve and isinstance(call, Bash) and (missing := detect_missing(call.command, output)):
+            self._failures[missing.name] += 1
+            self._emit(Event(kind="blocked", text=f"{missing.name} is missing",
+                             detail=describe(missing, self._failures[missing.name]), ok=False))
+            if self._resolve(missing, self._failures[missing.name]) is Fix.RETRY:
+                output = call.run(self.workspace)
+                continue
+            output += FAIL_NOTE
+            break
         self._emit(Event(kind="result", text=summary, detail=output, ok=ok))
         # Same stuck detection as the builtin loop: the same call getting the same result again.
         sig = (call.model_dump_json(), output)

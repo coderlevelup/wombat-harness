@@ -444,3 +444,72 @@ def test_repeat_guard_allows_rereading_after_a_change(ws):
     )
     _, reply, ev = run(s, ws, policy=Policy.YOLO)
     assert reply == "done" and not any(e.kind == "error" for e in ev)
+
+
+# -- a tool the model asked for is missing: Retry / Fail --------------------------------------------------
+
+MISSING = "exit code 1\n/usr/bin/python: No module named pytest"
+WORKED = "exit code 0\n2 passed in 0.01s"
+
+
+def scripted_bash(monkeypatch, *outputs):
+    from wombat_harness.agent.tools import Bash
+
+    ran = []
+
+    def fake(self, w):
+        ran.append(self.command)
+        return outputs[min(len(ran) - 1, len(outputs) - 1)]
+
+    monkeypatch.setattr(Bash, "run", fake)
+    return ran
+
+
+def run_resolving(script, ws, resolve, text="go"):
+    agent = PydanticAIAgent(script.model, ws, Policy.YOLO)
+    ev = []
+    reply = agent.run_turn(text, ev.append, lambda s, p: True, resolve=resolve)
+    return reply, ev
+
+
+def test_retry_runs_the_command_again_and_the_model_never_sees_the_failure(ws, monkeypatch):
+    from wombat_harness.agent.missing import Fix
+
+    ran = scripted_bash(monkeypatch, MISSING, WORKED)
+    asked = []
+    s = Script(call("bash", command="python -m pytest -q"), say("done"))
+    reply, ev = run_resolving(s, ws, lambda m, n: asked.append((m.name, n)) or Fix.RETRY)
+    assert reply == "done" and ran == ["python -m pytest -q"] * 2 and asked == [("pytest", 1)]
+    blocked = [e for e in ev if e.kind == "blocked"]
+    assert len(blocked) == 1 and "pytest" in blocked[0].text and "failed once" in blocked[0].detail
+    returned = tool_returns(s)[0]
+    assert "2 passed" in returned and "No module named" not in returned
+
+
+def test_fail_gives_the_error_back_to_the_model_to_recover(ws, monkeypatch):
+    from wombat_harness.agent.missing import Fix
+
+    scripted_bash(monkeypatch, MISSING)
+    s = Script(call("bash", command="python -m pytest -q"), say("no tests then"))
+    reply, _ = run_resolving(s, ws, lambda m, n: Fix.FAIL)
+    returned = tool_returns(s)[0]
+    assert reply == "no tests then" and "No module named pytest" in returned and "chose not to resolve" in returned
+
+
+def test_failure_count_includes_the_models_own_retries(ws, monkeypatch):
+    from wombat_harness.agent.missing import Fix
+
+    scripted_bash(monkeypatch, MISSING)
+    counts = []
+    s = Script(call("bash", command="python -m pytest -q"), call("bash", command="python -m pytest"), say("gave up"))
+    reply, ev = run_resolving(s, ws, lambda m, n: counts.append(n) or Fix.FAIL)
+    assert counts == [1, 2] and reply == "gave up"
+    assert "failed 2 times" in [e for e in ev if e.kind == "blocked"][1].detail
+
+
+def test_without_a_resolver_the_failure_goes_straight_to_the_model(ws, monkeypatch):
+    scripted_bash(monkeypatch, MISSING)
+    s = Script(call("bash", command="python -m pytest -q"), say("x"))
+    reply, ev = run_resolving(s, ws, None)
+    assert reply == "x" and not any(e.kind == "blocked" for e in ev)
+    assert "No module named pytest" in tool_returns(s)[0]

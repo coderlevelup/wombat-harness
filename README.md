@@ -55,6 +55,11 @@ wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y
   command and waits for `y` / `n` / `a` (allow everything this session). `--mode edits` auto-approves
   file edits but still asks for commands; `--mode yolo` asks for nothing. `/mode` changes it live.
 - **Denying (`n`) ends the turn** and returns you to the input box, with the denial kept in the conversation, so what you type next steers the agent instead of it guessing its next action.
+- **Missing tools: Retry / Fail.** If the model runs a command that isn't installed (`command not found`, or `python -m X` with no module `X`),
+  wombat pauses and tells you what is missing, for which Python (its path), how to install it when that is certain, and how many times it has
+  failed this turn. Fix it in another terminal, then press **`r`** to retry (the model never sees the failure) or **`f`** to fail it (the model
+  gets the error and tries another way). Esc still interrupts. The model is told not to install packages itself. Headless `wombat-agent` asks on
+  a terminal and fails the call without one.
 - **Keys:** Esc interrupts (cooperatively: after the current model call or command), `/clear` starts
   over, `/help`, `Ctrl+Q` quits.
 - **Why a union schema:** each step is `{thought, action}` where `action` is a pydantic discriminated

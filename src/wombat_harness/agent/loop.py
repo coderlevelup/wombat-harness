@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel
 
 from ..client import ChatClient, LLMError, LLMRequestError
+from .missing import Fix, Missing, describe, detect_missing
 from .tools import Bash, Finish, Step, ToolError, clip
 from .workspace import Workspace
 
@@ -26,7 +27,7 @@ Reply ONLY with JSON: {"thought": "...", "action": {"tool": "<name>", ...argumen
 - bash(command): run a shell command in the project directory
 - finish(message): you are done; `message` is your answer to the user
 
-Rules: read files before editing them. Prefer edit_file for small changes. Verify your work \
+Rules: read files before editing them. Prefer edit_file for small changes. Do not try to install packages: if a command isn't installed, the user is asked to fix it. Verify your work \
 (e.g. `python -m pytest -q` via bash; never run a .py test file with bash directly). Paths are relative to the project directory. When the task is \
 done, or the user only asked a question, call finish.
 
@@ -36,6 +37,7 @@ Top level:
 
 LOOP_AFTER = 3  # the same call returning the same result this many times in one turn means the model is stuck
 REPEAT_NOTE = "\n(You have made this exact call 3 times with the same result. Try something different, or call finish.)"
+FAIL_NOTE = "\n(The user chose not to resolve this. That command is unavailable: try another approach, or call finish.)"
 DENIED_NOTE = "The user denied this action. The turn has ended; wait for their next message."
 OBSERVATION = "Tool result ({tool}):\n{output}"
 ELIDED = "[earlier tool output elided to save context]"
@@ -48,7 +50,7 @@ class Policy(str, Enum):
 
 
 class Event(BaseModel):
-    kind: Literal["thought", "tool", "result", "denied", "reply", "error", "stopped"]
+    kind: Literal["thought", "tool", "result", "denied", "blocked", "reply", "error", "stopped"]
     text: str
     detail: str = ""
     ok: bool = True
@@ -65,6 +67,7 @@ def needs_approval(policy: Policy, call) -> bool:
 
 Emit = Callable[[Event], None]
 Approve = Callable[[str, str], bool]  # (summary, preview) -> allowed?
+Resolve = Callable[[Missing, int], Fix]  # (what is missing, failures so far this turn) -> the person's choice
 
 
 class AgentPort(Protocol):
@@ -74,7 +77,7 @@ class AgentPort(Protocol):
     workspace: Workspace
 
     def run_turn(self, text: str, on_event: Emit, approve: Approve,
-                 should_stop: Callable[[], bool] = ...) -> str: ...
+                 should_stop: Callable[[], bool] = ..., resolve: Resolve | None = None) -> str: ...
 
     def reset(self) -> None: ...
 
@@ -105,7 +108,7 @@ class Agent:
         return needs_approval(self.policy, call)
 
     def run_turn(self, text: str, on_event: Emit, approve: Approve,
-                 should_stop: Callable[[], bool] = ...) -> str: ...
+                 should_stop: Callable[[], bool] = ..., resolve: Resolve | None = None) -> str: ...
 
     def reset(self) -> None: ...
 
@@ -140,13 +143,18 @@ class Agent:
         return call.needs_approval
 
     def run_turn(self, text: str, on_event: Emit, approve: Approve,
-                 should_stop: Callable[[], bool] | None = None) -> str:
-        """Run until the model calls finish, a limit trips, or `should_stop()`. Returns the reply."""
+                 should_stop: Callable[[], bool] | None = None, resolve: Resolve | None = None) -> str:
+        """Run until the model calls finish, a limit trips, or `should_stop()`. Returns the reply.
+
+        `resolve`, if given, is asked what to do when a shell command fails because a tool isn't installed
+        (Retry / Fail); without it the failure just goes to the model.
+        """
         stop = should_stop or (lambda: False)
         self._turns.append(len(self.messages))
         self.messages.append({"role": "user", "content": text})
         invalid = repeats = 0
         seen: Counter[tuple[str, str]] = Counter()  # (call, result) -> times seen this turn
+        failures: Counter[str] = Counter()  # missing tool -> times it has failed this turn
 
         for _ in range(self.max_steps):
             if stop():
@@ -189,6 +197,16 @@ class Agent:
                 output, ok = call.run(self.workspace), True
             except ToolError as e:
                 output, ok = f"error: {e}", False
+            while ok and resolve and isinstance(call, Bash) and (missing := detect_missing(call.command, output)):
+                failures[missing.name] += 1
+                on_event(Event(kind="blocked", text=f"{missing.name} is missing",
+                               detail=describe(missing, failures[missing.name]), ok=False))
+                choice = resolve(missing, failures[missing.name])
+                if choice is Fix.RETRY:  # the person fixed it: run it again, and the model never sees the failure
+                    output = call.run(self.workspace)
+                    continue
+                output += FAIL_NOTE  # Fail: let the model see the failure and recover another way
+                break
             on_event(Event(kind="result", text=summary, detail=output, ok=ok))
             # Stuck detection: the same call getting the same result again. Looking at results, not just calls, catches
             # cycles (read, failing edit, read, failing edit ...) that a "same call back to back" check misses, and

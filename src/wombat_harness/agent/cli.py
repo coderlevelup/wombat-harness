@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .factory import DEFAULT_MODEL, ENGINES, HELP, make_agent
 from .loop import Event, Policy
+from .missing import Fix, Missing
 
 DIM, RED, GREEN, YELLOW, BOLD, RESET = "\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[33m", "\x1b[1m", "\x1b[0m"
 
@@ -20,12 +21,28 @@ def show(e: Event) -> None:
         body = (e.detail or e.text).strip().splitlines()
         shown = body[:8] + ([f"... {len(body) - 8} more lines"] if len(body) > 8 else [])
         print(f"{DIM if e.ok else RED}" + "\n".join("    " + ln for ln in shown) + RESET)
+    elif e.kind == "blocked":
+        print(f"{BOLD}{YELLOW}⚠ {e.text}{RESET}")
+        print(f"{DIM}" + "\n".join("    " + ln for ln in e.detail.splitlines()) + RESET)
     elif e.kind == "denied":
         print(f"{YELLOW}✗ denied: {e.text}{RESET}")
     elif e.kind == "reply":
         print(f"\n{e.text}\n")
     elif e.kind in ("error", "stopped"):
         print(f"{RED}! {e.text}{RESET}" + (f"\n{DIM}{e.detail}{RESET}" if e.detail else ""))
+
+
+def resolve_missing(missing: Missing, failures: int, *, tty: bool | None = None, ask=input) -> Fix:
+    """Ask on a terminal whether to Retry (after fixing it) or Fail (tell the model); without one, Fail."""
+    if not (sys.stdin.isatty() if tty is None else tty):
+        print("  (no tty: failing)")
+        return Fix.FAIL
+    while True:
+        ans = ask("  fix it in another terminal, then: [r]etry / [f]ail (tell the model): ").strip().lower()
+        if ans in ("r", "retry"):
+            return Fix.RETRY
+        if ans in ("f", "fail", ""):
+            return Fix.FAIL
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             agent.policy = Policy.YOLO
         return ans in ("y", "a")
 
-    reply = agent.run_turn(a.prompt, show, approve)
+    reply = agent.run_turn(a.prompt, show, approve, resolve=resolve_missing)
     return 0 if reply else 1
 
 
