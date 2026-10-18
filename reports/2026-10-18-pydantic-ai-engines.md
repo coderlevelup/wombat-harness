@@ -53,7 +53,9 @@ retry, then 3 with `retries=3` to match the builtin engine's tolerance), plus on
   file unchanged.
 - **Bad `edit_file` arguments** (about 3 runs): the model calls `edit_file` with arguments that fail
   validation and `Tool 'edit_file' exceeded max retries count` ends the turn, at 1 retry and again at 3.
-  In the repro it was passing `content` (a `write_file` argument) instead of `old`/`new`.
+  The exact arguments were not recorded, so I can't say what was wrong with them. (In the prose
+  repro, the tool-call JSON the model wrote as text used `content`, a `write_file` argument, in place
+  of `old`/`new`, which hints at the kind of mistake but is not the same failure.)
 - One early run recorded only "model reply was invalid" without detail (the driver now keeps it).
 
 Raising retries from 1 to 3 did not change the outcome (0 of 3).
