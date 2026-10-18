@@ -1,6 +1,10 @@
 # wombat-harness
 Python harness, not a novelist or a nude man.
 
+
+> "Oh, WOMBAT! Wombat Harness! Take me to that place where eternity knows no bounds!"
+> - Monty Python S2EP17 [Watch on YouTube](https://youtu.be/gAobK3fyGDI?si=gSAyMI0Up1p2kinY&t=223)
+
 Generates Python with a small local model (Ollama, llama.cpp, LM Studio — anything
 OpenAI-compatible). The pydantic `CodeResponse` schema is sent as a JSON schema for
 constrained decoding, the reply is validated (JSON + `ast.parse`), executed in a
