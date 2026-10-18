@@ -89,3 +89,5 @@ small to complete the task (see the results report).
   earlier identical run and 71 s on the final one).
 - Everything on screen is the model's own wording, including its "Oh dear!".
 - The Mac screenshot the author sent is not reproduced here; it is described in problem 2.
+- Afterwards the author reported a successful run of the client on their Mac (self-reported; details not recorded, and
+  no screenshot of it is included).

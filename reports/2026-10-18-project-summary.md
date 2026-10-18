@@ -59,8 +59,10 @@ arguments in the Llama failures, "failed 0 of 7", the effect of a warning on the
 
 ## 4. What we don't know
 
-- **No person has confirmed `wombat-tui` is usable end to end with a real model.** The UI runs against a real model only through a
-  script driving Textual's test harness. The author's own first run on a Mac failed on a missing model (since fixed).
+- **How well `wombat-tui` works for a person on a real project.** The author reports a **successful run of the client on their
+  Mac** (self-reported, after the missing-model error was fixed; which model, engine and task, how long it took, and anything
+  that felt rough were not recorded). Everything else about the UI with a real model comes from a script driving
+  Textual's test harness, not from a person at a terminal. One reported run on a tiny task says it can work, not that it is pleasant.
 - **Anything larger than a one-line bug fix.** Multi-file edits, long sessions, long histories (context trimming has never been
   exercised against a real long session), and bigger models.
 - **Whether Anthropic's schema rewrite matters** (#11): the system prompt also names the tools, so Haiku may succeed regardless.
@@ -80,7 +82,8 @@ arguments in the Llama failures, "failed 0 of 7", the effect of a warning on the
 ## 6. Next steps (none started)
 
 1. Merge PR #10 after review.
-2. A person tries `wombat-tui` on a real project with a 7b model and reports what feels wrong.
+2. Write down what the Mac run actually was (model, engine, task, timing, rough edges), then try `wombat-tui` on a real
+   project, not a toy, and report what feels wrong.
 3. #11, #12, #13 (control run, context trimming for `pai-tools`, temperature warning).
 4. A broader task set (several tasks, several sizes) so that rates, not single runs, can be reported.
 5. Streaming output, and sandboxing beyond path confinement.
