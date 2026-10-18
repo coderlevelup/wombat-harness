@@ -89,3 +89,6 @@ small to complete the task (see the results report).
   earlier identical run and 71 s on the final one).
 - Everything on screen is the model's own wording, including its "Oh dear!".
 - The Mac screenshot the author sent is not reproduced here; it is described in problem 2.
+- The author also ran `wombat-tui` with `gemma3:1b` on their Mac, earlier, with the same prompt on a smaller project (`calc.py` with only `add`, `test_calc.py` with one test): the client ran, but the
+  model did not complete the task (self-reported; how it failed, and the exact commit, were not recorded, and no screenshot of it
+  is included).

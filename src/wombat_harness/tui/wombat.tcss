@@ -44,4 +44,5 @@ Screen {
 
 #status.running  { color: $success; }
 #status.awaiting { color: $warning; text-style: bold; }
+#status.fixing   { color: $warning; text-style: bold; }
 #status.stopping { color: $warning; }

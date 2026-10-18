@@ -58,6 +58,15 @@ wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y
 - **Approvals:** reads are automatic. In `ask` mode every write, edit and command shows a diff or the
   command and waits for `y` / `n` / `a` (allow everything this session). `--mode edits` auto-approves
   file edits but still asks for commands; `--mode yolo` asks for nothing. `/mode` changes it live.
+- **You are only asked about actions that could happen.** An edit whose text isn't found or matches several places, or a write outside the workspace or onto a directory, is not put to you: it fails and the model gets the error.
+- **Test-file edits are flagged.** An approval for a change to a test file (`test_*.py`, `*_test.py`, `conftest.py`, `tests/`, `*.test.*`, `*.spec.*`) shows a warning in the bar and the diff, and the model is told to fix the code, not the tests. Paths in summaries and diffs are shown relative to the workspace.
+- **Denying (`n`) ends the turn** and returns you to the input box, with the denial kept in the conversation, so what you type next steers the agent instead of it guessing its next action.
+- **Missing tools: Retry / Fail.** If the model runs a command that isn't installed (`command not found`, or `python -m X` with no module `X`),
+  wombat pauses and tells you what is missing, for which Python (its path), how to install it when that is certain, and how many times it has
+  failed this turn. Press **`r`** to retry once you've fixed it in another terminal (the model never sees the failure), or **`f`** to not retry:
+  the model is told what is missing and asked for the install steps. It can propose running them with `bash` (you approve it as usual), or give
+  you the steps to run yourself, after which you just tell it to retry. Esc still interrupts. The model is told not to install packages
+  without asking. Headless `wombat-agent` asks on a terminal and fails the call without one.
 - **Keys:** Esc interrupts (cooperatively: after the current model call or command), `/clear` starts
   over, `/help`, `Ctrl+Q` quits.
 - **Why a union schema:** each step is `{thought, action}` where `action` is a pydantic discriminated
@@ -70,3 +79,24 @@ wombat-agent "fix the failing test" --workspace ./myproj   # one-shot, prompts y
 Architecture: `wombat_harness/agent` is the engine (no UI imports); `wombat_harness/tui` talks to it only
 through the `AgentPort` protocol. A turn runs in a Textual thread worker that only posts messages.
 Tests drive the UI headlessly with `App.run_test()` and a fake agent (`tests/test_tui.py`).
+
+## Engines and providers
+
+Three engines run the same agent behind one interface (`--engine` on `wombat-agent` and `wombat-tui`):
+
+| Engine | What it is | Use it for |
+|---|---|---|
+| `builtin` (default) | own loop + own HTTP client; the action is a pydantic discriminated union sent as a JSON schema | local models on Ollama; no extra dependencies |
+| `pai-native` | the same loop, with pydantic-ai as the model client (`NativeOutput`) | switching providers; works on models without tool support |
+| `pai-tools` | a pydantic-ai `Agent` with native function tools and deferred approvals | models that are good at tool calling (worked on Haiku; failed on 4b-8b Ollama models) |
+
+```
+pip install -e '.[pydantic-ai]'
+wombat-agent "fix the failing test" --engine pai-native --model gemma3:4b                 # Ollama (default)
+WOMBAT_ANTHROPIC_API_KEY=... wombat-agent "..." --engine pai-tools --model anthropic:claude-haiku-5-5
+```
+
+`--model` takes `provider:name` (`ollama` or `anthropic`); a bare name is an Ollama tag. The Anthropic key is read
+**only** from `WOMBAT_ANTHROPIC_API_KEY`, and the endpoint is always passed explicitly, so `ANTHROPIC_API_KEY` /
+`ANTHROPIC_BASE_URL` set for some other tool in your environment are ignored. Results, and how much to trust
+them, are in `reports/` (start with `2026-10-18-pydantic-ai-engines.md`).

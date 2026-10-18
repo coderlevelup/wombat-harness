@@ -22,6 +22,7 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Header, Input, RichLog, Static
 
 from ..agent import AgentPort, Event, Policy
+from ..agent.missing import Fix, Missing, describe
 
 HELP = (
     "/help           this help\n"
@@ -36,6 +37,7 @@ class ChatState(Enum):
     IDLE = "ready"
     RUNNING = "working"
     AWAITING = "waiting for your approval"
+    FIXING = "waiting for you to fix something"
     STOPPING = "stopping"
 
 
@@ -51,6 +53,12 @@ class ApprovalRequest(Message):
         self.summary, self.preview = summary, preview
 
 
+class FixRequest(Message):
+    def __init__(self, missing: Missing, failures: int) -> None:
+        super().__init__()
+        self.missing, self.failures = missing, failures
+
+
 class TurnFinished(Message):
     def __init__(self, error: str | None = None) -> None:
         super().__init__()
@@ -64,6 +72,8 @@ class ChatApp(App):
         Binding("y", "approve('y')", "Allow"),
         Binding("n", "approve('n')", "Deny"),
         Binding("a", "approve('a')", "Allow all"),
+        Binding("r", "fix('retry')", "Retry"),
+        Binding("f", "fix('fail')", "Fail"),
         Binding("escape", "interrupt", "Interrupt"),
         Binding("ctrl+c", "interrupt_or_quit", "Quit", show=False, priority=True),
         Binding("ctrl+q", "quit", "Quit"),
@@ -77,6 +87,8 @@ class ChatApp(App):
         self._cancel = threading.Event()
         self._answered = threading.Event()
         self._answer = False
+        self._fix_answered = threading.Event()
+        self._fix_choice = Fix.FAIL
 
     # -- layout ---------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -106,7 +118,7 @@ class ChatApp(App):
         status = self.query_one("#status", Static)
         status.update(f"{self.state.value} · mode: {self.agent.policy.value}")
         status.set_classes(self.state.name.lower())
-        self.query_one("#approval").set_class(self.state is ChatState.AWAITING, "visible")
+        self.query_one("#approval").set_class(self.state in (ChatState.AWAITING, ChatState.FIXING), "visible")
         self.sub_title = f"{self.agent.workspace.root} · {self.agent.policy.value}"
         if self.state is ChatState.IDLE:
             prompt.focus()
@@ -114,8 +126,10 @@ class ChatApp(App):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "approve":
             return self.state is ChatState.AWAITING
+        if action == "fix":
+            return self.state is ChatState.FIXING
         if action == "interrupt":
-            return self.state in (ChatState.RUNNING, ChatState.AWAITING)
+            return self.state in (ChatState.RUNNING, ChatState.AWAITING, ChatState.FIXING)
         return True
 
     # -- input ----------------------------------------------------------------
@@ -164,12 +178,23 @@ class ChatApp(App):
         self.state = ChatState.RUNNING
         self._answered.set()
 
+    def action_fix(self, choice: str) -> None:
+        if self.state is not ChatState.FIXING:
+            return
+        self._fix_choice = Fix(choice)
+        self._write(Text("  ↻ retrying" if self._fix_choice is Fix.RETRY else "  ✗ not retrying: asking the model for install steps",
+                         style="green" if self._fix_choice is Fix.RETRY else "yellow"))
+        self.state = ChatState.RUNNING
+        self._fix_answered.set()
+
     def action_interrupt(self) -> None:
-        if self.state in (ChatState.RUNNING, ChatState.AWAITING):
+        if self.state in (ChatState.RUNNING, ChatState.AWAITING, ChatState.FIXING):
             self._cancel.set()
             self._answer = False
+            self._fix_choice = Fix.FAIL
             self.state = ChatState.STOPPING
             self._answered.set()  # a pending approval counts as "no"
+            self._fix_answered.set()  # a pending fix prompt counts as "fail"
 
     def action_interrupt_or_quit(self) -> None:
         if self.state is ChatState.IDLE:
@@ -183,10 +208,20 @@ class ChatApp(App):
             return
         self._write(Text(f"? {message.summary}", style="bold yellow"))
         self._write(_colour_diff(message.preview))
+        warning = ("⚠ This changes a test file.  ", "bold yellow") if message.preview.startswith("⚠") else ("", "")
         self.query_one("#approval", Static).update(
-            Text.assemble(("Allow this?  ", "bold"), ("y", "bold green"), " yes   ",
+            Text.assemble(warning, ("Allow this?  ", "bold"), ("y", "bold green"), " yes   ",
                           ("n", "bold red"), " no   ", ("a", "bold yellow"), " yes to everything this session"))
         self.state = ChatState.AWAITING
+
+    def on_fix_request(self, message: FixRequest) -> None:
+        if self._cancel.is_set():  # interrupted while the request was in flight
+            self._fix_answered.set()
+            return
+        self.query_one("#approval", Static).update(Text.assemble(
+            (f"{message.missing.name} is missing.  ", "bold"), ("r", "bold green"), " retry (after you fix it)   ",
+            ("f", "bold yellow"), " don't retry (the model suggests install steps)"))
+        self.state = ChatState.FIXING
 
     # -- worker ---------------------------------------------------------------
     @work(thread=True, exclusive=True, group="turn")
@@ -200,8 +235,15 @@ class ChatApp(App):
             self._answered.wait()
             return self._answer and not cancel.is_set()
 
+        def resolve(missing: Missing, failures: int) -> Fix:
+            self._fix_answered.clear()
+            self._fix_choice = Fix.FAIL
+            self.post_message(FixRequest(missing, failures))
+            self._fix_answered.wait()
+            return self._fix_choice
+
         try:
-            self.agent.run_turn(text, lambda e: self.post_message(AgentEvent(e)), approve, cancel.is_set)
+            self.agent.run_turn(text, lambda e: self.post_message(AgentEvent(e)), approve, cancel.is_set, resolve)
             self.post_message(TurnFinished())
         except Exception as e:  # a crash must not leave the UI stuck on "working"
             self.post_message(TurnFinished(f"{type(e).__name__}: {e}"))
@@ -216,6 +258,10 @@ class ChatApp(App):
             self._write(_result(e))
         elif e.kind == "denied":
             self._write(Text(f"✗ denied: {e.text}", style="yellow"))
+            self._write(Text("  Type what you would like instead.", style="dim"))
+        elif e.kind == "blocked":
+            self._write(Text(f"⚠ {e.text}", style="bold yellow"))
+            self._write(Text("\n".join("  " + ln for ln in e.detail.splitlines()), style="dim"))
         elif e.kind == "reply":
             self._write(Markdown(e.text))
         elif e.kind == "error":
@@ -255,7 +301,8 @@ def _colour_diff(preview: str, max_lines: int = 30) -> Text:
     out = Text()
     lines = [ln.rstrip() for ln in preview.rstrip().splitlines()]
     for ln in lines[:max_lines]:
-        style = "green" if ln.startswith("+") and not ln.startswith("+++") else \
+        style = "bold yellow" if ln.startswith("⚠") else \
+            "green" if ln.startswith("+") and not ln.startswith("+++") else \
             "red" if ln.startswith("-") and not ln.startswith("---") else "dim"
         out.append("    " + ln + "\n", style=style)
     if len(lines) > max_lines:
@@ -267,19 +314,18 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     from pathlib import Path
 
-    from ..agent import Agent, Workspace
-    from ..client import OpenAICompatClient
+    from ..agent.factory import DEFAULT_MODEL, ENGINES, HELP, make_agent
 
     ap = argparse.ArgumentParser(prog="wombat-tui", description="Chat with a local-model coding agent.")
     ap.add_argument("--workspace", type=Path, default=Path("."), help="Directory the agent may read and change")
     ap.add_argument("--mode", choices=[p.value for p in Policy], default="ask")
-    ap.add_argument("--model", default="qwen2.5-coder:7b")
-    ap.add_argument("--base-url", default="http://localhost:11434/v1")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--base-url", default=None, help="override the provider's default endpoint")
+    ap.add_argument("--engine", choices=ENGINES, default="builtin", help=HELP)
     ap.add_argument("--max-steps", type=int, default=25)
     a = ap.parse_args(argv)
 
-    agent = Agent(OpenAICompatClient(a.model, a.base_url), Workspace(a.workspace), Policy(a.mode), a.max_steps)
-    ChatApp(agent).run()
+    ChatApp(make_agent(a.engine, a.model, a.base_url, a.workspace, Policy(a.mode), a.max_steps)).run()
     return 0
 
 

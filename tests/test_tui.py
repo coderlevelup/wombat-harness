@@ -3,6 +3,7 @@ import threading
 from textual.widgets import Input, RichLog
 
 from wombat_harness.agent import Event, Policy, Workspace
+from wombat_harness.agent.missing import Fix, Missing
 from wombat_harness.tui.app import ChatApp, ChatState
 
 
@@ -35,8 +36,9 @@ class FakeAgent:
     def reset(self):
         self.resets += 1
 
-    def run_turn(self, text, on_event, approve, should_stop=lambda: False):
+    def run_turn(self, text, on_event, approve, should_stop=lambda: False, resolve=None):
         self.turns.append(text)
+        self.resolve = resolve
         return self.script(self, text, on_event, approve, should_stop)
 
     @staticmethod
@@ -260,3 +262,124 @@ def test_display_tidying_keeps_code_indentation():
     out = _result(Event(kind="result", text="read_file", detail=code)).plain
     assert "   2      return a - b" in out and "   3              deeper = 1" in out  # indentation intact
     assert "[1,  2]" in out  # a 40-space run is collapsed
+
+
+async def test_denial_returns_control_with_a_hint(tmp_path):
+    def script(a, text, on_event, approve, should_stop):
+        if not approve("edit_file a.py", "-x\n+y"):
+            on_event(Event(kind="denied", text="edit_file a.py", ok=False))
+        return ""
+
+    app = ChatApp(FakeAgent(tmp_path, script))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "edit it")
+        await pilot.pause()
+        await pilot.press("n")
+        await settle(app, pilot)
+        text = transcript(app)
+        assert "denied: edit_file a.py" in text and "what you would like instead" in text
+        assert app.state is ChatState.IDLE
+        assert not app.query_one("#prompt", Input).disabled and app.query_one("#prompt", Input).has_focus
+
+
+# -- a tool is missing: Retry / Fail -------------------------------------------------------------------------
+
+PYTEST = Missing(kind="module", name="pytest", command="python -m pytest -q",
+                 install_hint="python -m pip install pytest", interpreter="/opt/py/bin/python")
+
+
+def missing_script(seen):
+    def script(a, text, on_event, approve, should_stop):
+        on_event(Event(kind="blocked", text="pytest is missing", detail="`pytest` is not installed. This has failed once.", ok=False))
+        seen["choice"] = a.resolve(PYTEST, 1)
+        on_event(Event(kind="reply", text=f"chose {seen['choice'].value}"))
+        return ""
+    return script
+
+
+async def test_missing_tool_waits_for_retry_or_fail(tmp_path):
+    seen = {}
+    app = ChatApp(FakeAgent(tmp_path, missing_script(seen)))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "run the tests")
+        await pilot.pause()
+        assert app.state is ChatState.FIXING
+        text = transcript(app)
+        assert "pytest is missing" in text and "failed once" in text
+        assert app.query_one("#approval").has_class("visible") and app.query_one("#prompt", Input).disabled
+        assert app.check_action("fix", ()) and not app.check_action("approve", ())
+        await pilot.press("r")
+        await settle(app, pilot)
+        assert seen["choice"] is Fix.RETRY and "chose retry" in transcript(app)
+        assert app.state is ChatState.IDLE and not app.query_one("#approval").has_class("visible")
+
+
+async def test_missing_tool_fail_choice(tmp_path):
+    seen = {}
+    app = ChatApp(FakeAgent(tmp_path, missing_script(seen)))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "run the tests")
+        await pilot.pause()
+        await pilot.press("f")
+        await settle(app, pilot)
+        assert seen["choice"] is Fix.FAIL and app.state is ChatState.IDLE
+
+
+async def test_fix_keys_do_nothing_outside_a_missing_tool_prompt(tmp_path):
+    seen = {}
+    agent = FakeAgent(tmp_path, missing_script(seen))
+    app = ChatApp(agent)
+    async with app.run_test() as pilot:
+        app.query_one("#prompt", Input).blur()
+        await pilot.press("r", "f")
+        assert app.state is ChatState.IDLE and not agent.turns and not seen
+
+
+async def test_a_still_means_allow_all_at_an_approval_and_not_at_a_fix_prompt(tmp_path):
+    seen = {}
+    agent = FakeAgent(tmp_path, missing_script(seen))
+    app = ChatApp(agent)
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "go")
+        await pilot.pause()
+        assert app.state is ChatState.FIXING and not app.check_action("approve", ())
+        await pilot.press("a")  # must not switch to yolo while only a fix is being asked
+        assert agent.policy is Policy.ASK and app.state is ChatState.FIXING
+        await pilot.press("f")
+        await settle(app, pilot)
+
+
+async def test_escape_at_a_fix_prompt_fails_it_and_stops_the_turn(tmp_path):
+    seen = {}
+
+    def script(a, text, on_event, approve, should_stop):
+        seen["choice"] = a.resolve(PYTEST, 1)
+        seen["stopped"] = should_stop()
+        return ""
+
+    app = ChatApp(FakeAgent(tmp_path, script))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "go")
+        await pilot.pause()
+        assert app.check_action("interrupt", ())
+        await pilot.press("escape")
+        await settle(app, pilot)
+        assert seen == {"choice": Fix.FAIL, "stopped": True}
+        assert app.state is ChatState.IDLE and "interrupted" in transcript(app)
+
+
+async def test_approval_bar_warns_when_a_test_file_is_being_changed(tmp_path):
+    def script(a, text, on_event, approve, should_stop):
+        approve("edit_file test_calc.py", "⚠ this changes a test file\n--- a/test_calc.py\n+++ b/test_calc.py\n-assert x == 3\n+assert x == 1")
+        return ""
+
+    app = ChatApp(FakeAgent(tmp_path, script))
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "go")
+        await pilot.pause()
+        try:
+            bar = str(app.query_one("#approval").render())
+            assert "test file" in bar and "y" in bar
+        finally:
+            await pilot.press("n")  # always release the blocked worker, so a failing assertion can't hang the app
+            await settle(app, pilot)
