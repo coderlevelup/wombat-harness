@@ -5,7 +5,7 @@ import argparse
 import sys
 
 from ..agent import Policy
-from ..agent.factory import DEFAULT_BASE_URL, DEFAULT_MODEL, ENGINES, make_agent
+from ..agent.factory import DEFAULT_MODEL, ENGINES, make_agent
 from . import TASKS, run_task
 
 
@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     ok = True
     for name in args.names or TASKS:
         result = run_task(TASKS[name], lambda root: make_agent(
-            args.engine, args.model, args.base_url or DEFAULT_BASE_URL, root, Policy.YOLO, args.max_steps))
+            args.engine, args.model, args.base_url, root, Policy.YOLO, args.max_steps))
         print(result.model_dump_json(), flush=True)
         ok &= result.done
     return 0 if ok else 1
