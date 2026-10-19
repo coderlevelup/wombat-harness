@@ -13,7 +13,7 @@ or a larger local model).
 models. That task is far too easy to say the goal is met.
 
 **To do:**
-- [ ] A small set of **realistic tasks** (fix a bug across files, add a feature with tests, a small refactor, work in an unfamiliar repo) with a
+- [~] (#18, task set and `python -m wombat_harness.tasks` runner in place; not yet run against a model) A small set of **realistic tasks** (fix a bug across files, add a feature with tests, a small refactor, work in an unfamiliar repo) with a
   clear "done" check that a model can't satisfy by editing the test. These are the harness's acceptance tests, not a leaderboard.
 - [ ] Long sessions: context trimming for `pai-tools` (#12), and a real long-history run on either engine
 - [ ] Hosted-model rough edges: the `temperature` warning (#13), whether Anthropic's schema rewrite matters (#11)
