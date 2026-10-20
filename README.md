@@ -1,11 +1,10 @@
 # wombat-harness
-Python harness, not a novelist or a nude man.
-
+Python harness for small models, named for the poetry inspector, Wombat Harness, in the Monty Python sketch "Poets". 
 
 > "Oh, WOMBAT! Wombat Harness! Take me to that place where eternity knows no bounds!"
-> - Monty Python S2EP17 [Watch on YouTube](https://youtu.be/gAobK3fyGDI?si=gSAyMI0Up1p2kinY&t=223)
+> - Monty Python S2EP17 [Watch on YouTube](https://youtu.be/gAobK3fyGDI?si=gSAyMI0Up1p2kinY&t=223) [Script](http://www.montypython.50webs.com/scripts/Series_2/24.htm) 
 
-**Where this is going:** see [ROADMAP.md](ROADMAP.md): first, completing real coding tasks with a capable model; then trying the same tasks with a tiny model and whatever affordances it needs; and keeping the harness plain Python that is easy to adapt to other small models and other worlds.
+**Where this is going:** see [ROADMAP.md](ROADMAP.md): first, a quick proof of possibility, completing real coding tasks with a capable cloud model and the same tasks with a tiny model and finessing finagling, keeping the harness plain Python that is easy to inspect and adapt to other small models and other worlds. Then exploring compositions comprising multiple domain specific small models. 
 
 Generates Python with a small local model (Ollama, llama.cpp, LM Studio — anything
 OpenAI-compatible). The pydantic `CodeResponse` schema is sent as a JSON schema for
