@@ -1,8 +1,5 @@
 # wombat-harness
-Python harness, not a novelist or a nude man.
-
-A poetry inspector for haikus and small language models. Don't get seduced into Thomas Hardy:
-we're keeping this strictly to the short stuff, not novels. (Why the name? See [WHY_WOMBAT.md](WHY_WOMBAT.md).)
+Python harness for small models, named for the poetry inspector Wombat Harness in the Monty Python sketch "Poets".
 
 
 > "Oh, WOMBAT! Wombat Harness! Take me to that place where eternity knows no bounds!"
