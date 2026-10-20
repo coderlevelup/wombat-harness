@@ -16,6 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--base-url", default=None)
     p.add_argument("--max-steps", type=int, default=15)
+    p.add_argument("--check-first", action="store_true", help="show the model the project's test output before its first step")
     args = p.parse_args(argv)
     unknown = [n for n in args.names if n not in TASKS]
     if unknown:
@@ -23,7 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     ok = True
     for name in args.names or TASKS:
         result = run_task(TASKS[name], lambda root: make_agent(
-            args.engine, args.model, args.base_url, root, Policy.YOLO, args.max_steps))
+            args.engine, args.model, args.base_url, root, Policy.YOLO, args.max_steps,
+            check=f"{sys.executable} -m pytest -q -p no:cacheprovider" if args.check_first else None))
         print(result.model_dump_json(), flush=True)
         ok &= result.done
     return 0 if ok else 1

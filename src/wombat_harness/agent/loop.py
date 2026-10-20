@@ -50,6 +50,7 @@ def fail_note(m: Missing) -> str:
 
 
 DENIED_NOTE = "The user denied this action. The turn has ended; wait for their next message."
+CHECK_REPORT = "\n\n[Before you started, the harness ran `{command}` in the project. Result:]\n{output}"
 OBSERVATION = "Tool result ({tool}):\n{output}"
 ELIDED = "[earlier tool output elided to save context]"
 
@@ -101,9 +102,11 @@ class Agent:
         policy: Policy = Policy.ASK,
         max_steps: int = 25,
         context_chars: int = 16_000,
+        check: str | None = None,
     ):
         self.client, self.workspace, self.policy = client, workspace, policy
         self.max_steps, self.context_chars = max_steps, context_chars
+        self.check = check
         self.reset()
 
     def reset(self) -> None:
@@ -127,7 +130,7 @@ class Agent:
         """
         stop = should_stop or (lambda: False)
         self._turns.append(len(self.messages))
-        self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text + self._check_report()})
         invalid = repeats = 0
         seen: Counter[tuple[str, str]] = Counter()  # (call, result) -> times seen this turn
         failures: Counter[str] = Counter()  # missing tool -> times it has failed this turn
@@ -200,6 +203,17 @@ class Agent:
 
         on_event(Event(kind="error", text=f"stopped after {self.max_steps} steps without finishing", ok=False))
         return ""
+
+    def _check_report(self) -> str:
+        """Run the configured check (e.g. the project's tests) and show the model what it says before its first step.
+
+        A small model that is told "the tests fail" tends to guess; shown the failure (assertion, traceback, file names)
+        it starts from the real problem. The command is the person's, not the model's, so it needs no approval.
+        """
+        if not self.check:
+            return ""
+        output = Bash(tool="bash", command=self.check).run(self.workspace)
+        return CHECK_REPORT.format(command=self.check, output=clip(output))
 
     def _observe(self, tool: str, output: str) -> None:
         self.messages.append({"role": "user", "content": OBSERVATION.format(tool=tool, output=clip(output))})

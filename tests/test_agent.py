@@ -467,3 +467,26 @@ def test_the_prompts_tell_the_model_not_to_edit_tests_to_make_them_pass(ws):
     from wombat_harness.agent.loop import SYSTEM
 
     assert "not the tests" in SYSTEM
+
+
+# -- check-first ----------------------------------------------------------------------------
+
+def test_check_output_is_shown_to_the_model_before_its_first_step(ws):
+    c = Scripted(step("finish", message="done"))
+    run(Agent(c, ws, check="echo FAILED test_a.py::test_add; exit 1"), text="fix it")
+    first_user = c.seen[0][-1]["content"]
+    assert first_user.startswith("fix it")
+    assert "FAILED test_a.py::test_add" in first_user and "exit code 1" in first_user
+
+
+def test_no_check_leaves_the_message_alone(ws):
+    c = Scripted(step("finish", message="done"))
+    run(Agent(c, ws), text="fix it")
+    assert c.seen[0][-1]["content"] == "fix it"
+
+
+def test_check_is_not_an_approval_prompt(ws):
+    c = Scripted(step("finish", message="done"))
+    asked = []
+    run(Agent(c, ws, policy=Policy.ASK, check="true"), approve=lambda s, p: asked.append(s) or True)
+    assert asked == []
