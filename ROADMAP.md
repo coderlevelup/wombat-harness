@@ -28,7 +28,7 @@ not a better model. Models around 1b did not finish even the easy task (0 of 20 
 
 **Affordances to try** (each comes from something we saw go wrong; all are hypotheses, cheapest first):
 - The small model read the test, decided the code was fine, and edited the test: **run the failing test first and show the failure** (traceback,
-  files named in it) so it starts from the real problem. Already flagged: test-file edits, and the prompt says fix the code, not the tests.
+  files named in it) so it starts from the real problem. *Tried (`--check-first`, one run per task on 2 models): no improvement, see `reports/2026-10-19-acceptance-tasks.md`.* Already flagged: test-file edits, and the prompt says fix the code, not the tests.
 - It forgot to verify, or ran the wrong command: **the harness runs the project's check itself after an edit** and feeds the result back
   (the one-shot generator already has `--check` / `--check-cwd`).
 - `edit_file` fails when the `old` text is missing or ambiguous: an easier edit primitive (by line range, or replace a function) for small files.

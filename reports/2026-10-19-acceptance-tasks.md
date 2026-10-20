@@ -27,3 +27,23 @@ These are hypotheses from five tasks and two small models:
 - Editing the test instead of the code showed up again in both small models on the one task whose bug isn't in the file named by the test. "Run the failing test first and show the failure, with the files in the traceback" (#19) is the first affordance to try: the traceback would have pointed at `inventory/loader.py`.
 - Repeated `edit_file`/`grep` loops on a multi-file rename: a rename-style tool, or a guard that names the loop, are candidates.
 - The capable model finished everything in seconds, so these five tasks do not separate capable models from each other. They do separate the small ones.
+
+## Experiment: `--check-first` (show the test output before the first step) did not help
+
+Hypothesis from the failures above: if the harness runs the project's tests and puts the output in front of the model, it will start from the real failure and stop editing tests. The flag is `--check-first` (builtin and pai-native engines). Same tasks, one run per cell, data in `data/2026-10-19-tasks-local-check-first.jsonl`.
+
+| Task | gemma3:4b without | with | qwen2.5-coder:7b without | with |
+|---|---|---|---|---|
+| fix-add | done | done | done | done* |
+| fix-across-files | done | not done | done | not done |
+| add-feature | not done | not done | done | not done |
+| rename-function | not done | not done | done | done |
+| unfamiliar-package | not done | not done | not done | not done |
+| **done** | **2 of 5** | **1 of 5** | **4 of 5** | **2 of 5** |
+
+\* First attempt died with an Ollama 500 (`signal: killed`; I had two 4b/7b models warm at once, probably memory), rerun alone passed. Not counted as a model failure.
+
+- Not supported: no improvement on either model, and both did worse on `fix-across-files`, where the failing output names `pricing.py` yet gemma edited `checkout.py` and then edited the protected `test_checkout.py` five times. Both models still edited tests on `unfamiliar-package`.
+- n = 1 per cell, so a drop from 4 to 2 could be noise. I can't say it hurts; I can say there is no sign it helps.
+- What I haven't ruled out: that the way the output is worded or its length (pytest output in a small context) is the problem, rather than showing the failure at all. I have not read the models' replies to see how they used it.
+- Decision: the flag stays, off by default. Not recommended on the strength of this run. Next candidates in #19 are different in kind: stopping the test edit itself (e.g. refusing or flagging an edit to a test file before the model has touched the code) rather than hoping the model reads better.
