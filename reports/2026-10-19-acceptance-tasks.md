@@ -47,3 +47,27 @@ Hypothesis from the failures above: if the harness runs the project's tests and 
 - n = 1 per cell, so a drop from 4 to 2 could be noise. I can't say it hurts; I can say there is no sign it helps.
 - What I haven't ruled out: that the way the output is worded or its length (pytest output in a small context) is the problem, rather than showing the failure at all. I have not read the models' replies to see how they used it.
 - Decision: the flag stays, off by default. Not recommended on the strength of this run. Next candidates in #19 are different in kind: stopping the test edit itself (e.g. refusing or flagging an edit to a test file before the model has touched the code) rather than hoping the model reads better.
+
+## Experiment: `--tdd` (harness-held red/green/refactor; tests locked while making them pass)
+
+The harness picks the phase from the check (failing: GREEN, passing: RED; `rename-function` starts in REFACTOR), refuses edits that don't fit the phase, and refuses `finish` until the tests pass. Data: `data/2026-11-04-tasks-local-tdd.jsonl` (includes the first attempts and the reruns of cells that failed on the server).
+
+| Task | gemma3:4b plain | `--tdd` | qwen2.5-coder:7b plain | `--tdd` |
+|---|---|---|---|---|
+| fix-add | done | done | done | done* |
+| fix-across-files | done | not done | done | not done |
+| add-feature | not done | not done | done | not done** |
+| rename-function | not done | not done*** | done | not done |
+| unfamiliar-package | not done | not done | not done | not done |
+| **done** | **2 of 5** | **1 of 5** | **4 of 5** | **1 of 5** |
+
+\* first attempt hit the 120 s no-reply timeout on a cold 7b model; rerun with the model warm passed.
+\*\* first attempt timed out the same way; the warm rerun died with an Ollama 500 ("token repeat limit reached"), a degenerate-output abort.
+\*\*\* first attempt died with an Ollama 500 (runner stopped, resource limits); the rerun ran out of 15 steps.
+
+- **The lock did what it was for.** `protected_intact` is true in every `--tdd` run: no model edited a test to get green, which both did in the earlier runs of `unfamiliar-package` and `fix-across-files`.
+- **It did not get either model to done.** With tests locked, the models spent their steps elsewhere. In `unfamiliar-package` both invented files that don't exist (`inventory/DATA`, `inventory/data.json`, `inventory/load_items.py`, `inventory/item.py`) instead of listing the directory; `gemma3:4b` kept editing `checkout.py` in `fix-across-files` while the failure pointed at `pricing.py`. The block is gone; the missing step is locating the code.
+- `qwen2.5-coder:7b` on `rename-function` replied but left the hidden check failing, and ran `git checkout -- orders.py report.py test_orders.py` in the middle (the runner uses yolo, so nothing asked).
+- n = 1 per cell and two small models on a shared CPU that killed the runner or timed out several attempts. Read this as "no sign of improvement", not "it hurts".
+
+Next for #19, now that the test shortcut is closed: make the model find the right file (the traceback's file names as a starting `read_file`, or a directory listing of the package up front), not more phase rules.
