@@ -76,6 +76,7 @@ RENAME_ACROSS = Task(
             "def test_total():\n    assert calc_total([(2, 3), (1, 4)]) == 10\n\n\n"
             "def test_summary():\n    assert summary([(2, 3)]) == \"total=6\"\n"),
     },
+    tdd_start="refactor",  # behaviour is unchanged, so there is no failing test to write first
     hidden=(
         "import pathlib\n"
         "from orders import compute_total; from report import summary\n"

@@ -20,6 +20,7 @@ class Task(BaseModel):
     protected: list[str] = Field(default_factory=list)      # files that must stay byte-for-byte as given
     hidden: str                                             # python run in the project; exit 0 means done
     solution: dict[str, str] = Field(default_factory=dict)  # reference edit, used to test the task itself
+    tdd_start: str | None = None                            # first TDD phase when run with --tdd (default: from the check)
 
     def write(self, root: Path, files: dict[str, str] | None = None) -> None:
         for rel, text in (self.files if files is None else files).items():

@@ -490,3 +490,43 @@ def test_check_is_not_an_approval_prompt(ws):
     asked = []
     run(Agent(c, ws, policy=Policy.ASK, check="true"), approve=lambda s, p: asked.append(s) or True)
     assert asked == []
+
+
+# -- tdd ------------------------------------------------------------------------------------
+
+def tdd_ws(tmp_path):
+    (tmp_path / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+    (tmp_path / "test_calc.py").write_text("from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n")
+    return Workspace(tmp_path)
+
+
+CHECK = "python -m pytest -q -p no:cacheprovider"
+
+
+def test_failing_tests_start_green_and_test_edits_are_refused(tmp_path):
+    w = tdd_ws(tmp_path)
+    c = Scripted(step("edit_file", path="test_calc.py", old="== 3", new="== -1"), step("finish", message="x"),
+                 step("edit_file", path="calc.py", old="a - b", new="a + b"), step("finish", message="fixed"))
+    reply, ev = run(Agent(c, w, Policy.YOLO, check=CHECK, tdd_mode=True))
+    assert "== 3" in (tmp_path / "test_calc.py").read_text()  # the test was never touched
+    assert "a + b" in (tmp_path / "calc.py").read_text()
+    assert reply == "fixed"
+    refused = [e.detail for e in ev if e.kind == "result" and not e.ok]
+    assert any("test file" in d for d in refused) and any("tests still fail" in d for d in refused)
+    assert [e.text.split(":")[0] for e in ev if e.kind == "phase"][:2] == ["GREEN", "REFACTOR"]
+
+
+def test_passing_tests_start_red_and_production_edits_are_refused(tmp_path):
+    w = tdd_ws(tmp_path)
+    (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+    c = Scripted(step("edit_file", path="calc.py", old="a + b", new="b + a"),
+                 step("write_file", path="test_more.py", content="from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 1\n"))
+    reply, ev = run(Agent(c, w, Policy.YOLO, check=CHECK, tdd_mode=True, max_steps=2))
+    assert "b + a" not in (tmp_path / "calc.py").read_text()
+    assert (tmp_path / "test_more.py").exists()
+    assert [e.text.split(":")[0] for e in ev if e.kind == "phase"] == ["RED", "GREEN"]
+
+
+def test_tdd_needs_a_check(tmp_path):
+    with pytest.raises(ValueError):
+        Agent(Scripted(), tdd_ws(tmp_path), tdd_mode=True)

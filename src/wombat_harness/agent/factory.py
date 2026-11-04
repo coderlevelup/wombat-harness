@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ..client import OpenAICompatClient
 from .loop import Agent, AgentPort, Policy
+from .tdd import Phase
 from .workspace import Workspace
 
 ENGINES = ("builtin", "pai-native", "pai-tools")
@@ -20,22 +21,26 @@ HELP = (
 
 
 def make_agent(engine: str, model: str, base_url: str | None, workspace: str | Path,
-               policy: Policy, max_steps: int, check: str | None = None) -> AgentPort:
+               policy: Policy, max_steps: int, check: str | None = None,
+               tdd_mode: bool = False, tdd_start: str | None = None) -> AgentPort:
     ws = Workspace(workspace)
-    if check and engine == "pai-tools":
-        raise SystemExit("--check-first is not supported by --engine pai-tools yet; use builtin or pai-native")
+    if (check or tdd_mode) and engine == "pai-tools":
+        raise SystemExit("--check-first and --tdd are not supported by --engine pai-tools yet; use builtin or pai-native")
+    if tdd_mode and not check:
+        raise SystemExit("--tdd needs --check-first CMD (the tests it watches)")
+    tdd_kw = {"tdd_mode": tdd_mode, "tdd_start": Phase(tdd_start) if tdd_start else None}
     provider, name = parse_model_spec(model)
     if engine == "builtin":
         if provider != "ollama":
             raise SystemExit(f"--engine builtin only talks to Ollama-style servers; use pai-native or pai-tools for {provider}")
-        return Agent(OpenAICompatClient(name, resolve_base_url(provider, base_url)), ws, policy, max_steps, check=check)
+        return Agent(OpenAICompatClient(name, resolve_base_url(provider, base_url)), ws, policy, max_steps, check=check, **tdd_kw)
     try:
         from ..agent_pai import PydanticAIAgent, PydanticAIClient
         from ..agent_pai.client import build_model
     except ImportError:
         raise SystemExit(f"--engine {engine} needs pydantic-ai: pip install -e '.[pydantic-ai]'") from None
     if engine == "pai-native":
-        return Agent(PydanticAIClient(model, base_url), ws, policy, max_steps, check=check)
+        return Agent(PydanticAIClient(model, base_url), ws, policy, max_steps, check=check, **tdd_kw)
     if engine == "pai-tools":
         return PydanticAIAgent(build_model(model, base_url), ws, policy, max_steps)
     raise ValueError(f"unknown engine {engine!r}; choose from {', '.join(ENGINES)}")
