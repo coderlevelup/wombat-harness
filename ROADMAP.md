@@ -13,7 +13,7 @@ or a larger local model).
 models. That task is far too easy to say the goal is met.
 
 **To do:**
-- [ ] A small set of **realistic tasks** (fix a bug across files, add a feature with tests, a small refactor, work in an unfamiliar repo) with a
+- [~] (#18, task set and `python -m wombat_harness.tasks` runner in place; not yet run against a model) A small set of **realistic tasks** (fix a bug across files, add a feature with tests, a small refactor, work in an unfamiliar repo) with a
   clear "done" check that a model can't satisfy by editing the test. These are the harness's acceptance tests, not a leaderboard.
 - [ ] Long sessions: context trimming for `pai-tools` (#12), and a real long-history run on either engine
 - [ ] Hosted-model rough edges: the `temperature` warning (#13), whether Anthropic's schema rewrite matters (#11)
@@ -28,7 +28,7 @@ not a better model. Models around 1b did not finish even the easy task (0 of 20 
 
 **Affordances to try** (each comes from something we saw go wrong; all are hypotheses, cheapest first):
 - The small model read the test, decided the code was fine, and edited the test: **run the failing test first and show the failure** (traceback,
-  files named in it) so it starts from the real problem. Already flagged: test-file edits, and the prompt says fix the code, not the tests.
+  files named in it) so it starts from the real problem. *Tried (`--check-first`, one run per task on 2 models): no improvement, see `reports/2026-10-19-acceptance-tasks.md`.* Already flagged: test-file edits, and the prompt says fix the code, not the tests.
 - It forgot to verify, or ran the wrong command: **the harness runs the project's check itself after an edit** and feeds the result back
   (the one-shot generator already has `--check` / `--check-cwd`).
 - `edit_file` fails when the `old` text is missing or ambiguous: an easier edit primitive (by line range, or replace a function) for small files.

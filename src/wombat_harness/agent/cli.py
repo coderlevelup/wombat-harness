@@ -54,9 +54,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-url", default=None, help="override the provider's default endpoint")
     ap.add_argument("--engine", choices=ENGINES, default="builtin", help=HELP)
     ap.add_argument("--max-steps", type=int, default=25)
+    ap.add_argument("--check-first", metavar="CMD", help="run this command (e.g. 'python -m pytest -q') before each turn and show the model its output")
     a = ap.parse_args(argv)
 
-    agent = make_agent(a.engine, a.model, a.base_url, a.workspace, Policy(a.mode), a.max_steps)
+    agent = make_agent(a.engine, a.model, a.base_url, a.workspace, Policy(a.mode), a.max_steps, check=a.check_first)
 
     def approve(summary: str, preview: str) -> bool:
         print(f"{BOLD}{YELLOW}? {summary}{RESET}")
