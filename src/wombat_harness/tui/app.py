@@ -268,6 +268,8 @@ class ChatApp(App):
             self._write(Text(f"! {e.text}" + (f"\n  {e.detail}" if e.detail else ""), style="red"))
         elif e.kind == "stopped":
             self._write(Text("■ stopped", style="yellow"))
+        elif e.kind == "phase":
+            self._write(Text(f"◆ {e.text}", style="bold cyan"))
 
     def on_turn_finished(self, message: TurnFinished) -> None:
         if message.error:

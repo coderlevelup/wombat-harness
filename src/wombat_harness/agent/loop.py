@@ -11,7 +11,8 @@ from pydantic import BaseModel
 
 from ..client import ChatClient, LLMError, LLMRequestError
 from .missing import Fix, Missing, describe, detect_missing
-from .tools import Bash, Finish, Step, ToolError, clip, relativize
+from . import tdd
+from .tools import Bash, EditFile, Finish, Step, ToolError, WriteFile, clip, relativize
 from .workspace import Workspace
 
 SYSTEM = """\
@@ -50,6 +51,7 @@ def fail_note(m: Missing) -> str:
 
 
 DENIED_NOTE = "The user denied this action. The turn has ended; wait for their next message."
+CHECK_REPORT = "\n\n[Before you started, the harness ran `{command}` in the project. Result:]\n{output}"
 OBSERVATION = "Tool result ({tool}):\n{output}"
 ELIDED = "[earlier tool output elided to save context]"
 
@@ -61,7 +63,7 @@ class Policy(str, Enum):
 
 
 class Event(BaseModel):
-    kind: Literal["thought", "tool", "result", "denied", "blocked", "reply", "error", "stopped"]
+    kind: Literal["thought", "tool", "result", "denied", "blocked", "reply", "error", "stopped", "phase"]
     text: str
     detail: str = ""
     ok: bool = True
@@ -101,9 +103,16 @@ class Agent:
         policy: Policy = Policy.ASK,
         max_steps: int = 25,
         context_chars: int = 16_000,
+        check: str | None = None,
+        tdd_mode: bool = False,
+        tdd_start: tdd.Phase | None = None,
     ):
+        if tdd_mode and not check:
+            raise ValueError("tdd mode needs a check command (the tests)")
+        self.tdd_mode, self.tdd_start, self.phase = tdd_mode, tdd_start, None
         self.client, self.workspace, self.policy = client, workspace, policy
         self.max_steps, self.context_chars = max_steps, context_chars
+        self.check = check
         self.reset()
 
     def reset(self) -> None:
@@ -126,8 +135,9 @@ class Agent:
         (Retry / Fail); without it the failure just goes to the model.
         """
         stop = should_stop or (lambda: False)
+        self._on_event = on_event
         self._turns.append(len(self.messages))
-        self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text + self._check_report()})
         invalid = repeats = 0
         seen: Counter[tuple[str, str]] = Counter()  # (call, result) -> times seen this turn
         failures: Counter[str] = Counter()  # missing tool -> times it has failed this turn
@@ -156,8 +166,17 @@ class Agent:
 
             call = relativize(step.action, self.workspace)
             if isinstance(call, Finish):
+                if self.tdd_mode and (why := tdd.finish_refusal(self.phase)):
+                    on_event(Event(kind="result", text="finish", detail=why, ok=False))
+                    self._observe("finish", why)
+                    continue
                 on_event(Event(kind="reply", text=call.message))
                 return call.message
+
+            if self.tdd_mode and (why := tdd.refusal(self.phase, call)):
+                on_event(Event(kind="result", text=call.summary(), detail=why, ok=False))
+                self._observe(call.tool, why)
+                continue
 
             summary = call.summary()
             # An action that is certain to fail (edit text not found / ambiguous, path outside the workspace) is not
@@ -185,6 +204,12 @@ class Agent:
                     continue
                 output += fail_note(missing)  # Fail: let the model see the failure and recover another way
                 break
+            if self.tdd_mode and ok and isinstance(call, (EditFile, WriteFile)):
+                passed, _ = self._run_check()
+                self.phase, note = tdd.advance(self.phase, call, passed)
+                if note:
+                    output += f"\n[{note}]"
+                    self._set_phase(self.phase)
             on_event(Event(kind="result", text=summary, detail=output, ok=ok))
             # Stuck detection: the same call getting the same result again. Looking at results, not just calls, catches
             # cycles (read, failing edit, read, failing edit ...) that a "same call back to back" check misses, and
@@ -200,6 +225,29 @@ class Agent:
 
         on_event(Event(kind="error", text=f"stopped after {self.max_steps} steps without finishing", ok=False))
         return ""
+
+    def _check_report(self) -> str:
+        """Run the configured check (e.g. the project's tests) and show the model what it says before its first step.
+
+        A small model that is told "the tests fail" tends to guess; shown the failure (assertion, traceback, file names)
+        it starts from the real problem. The command is the person's, not the model's, so it needs no approval.
+        """
+        if not self.check:
+            return ""
+        passed, output = self._run_check()
+        if self.tdd_mode:
+            self._set_phase(self.tdd_start or tdd.start_phase(passed))
+            output += f"\n[{tdd.GUIDE[self.phase]}]"
+        return CHECK_REPORT.format(command=self.check, output=clip(output))
+
+    def _run_check(self) -> tuple[bool, str]:
+        # no .pyc: an edit within the same second as the last run would otherwise be hidden by a stale cache
+        output = Bash(tool="bash", command=f"export PYTHONDONTWRITEBYTECODE=1; {self.check}").run(self.workspace)
+        return output.startswith("exit code 0"), output
+
+    def _set_phase(self, phase: tdd.Phase) -> None:
+        self.phase = phase
+        self._on_event(Event(kind="phase", text=f"{phase.value.upper()}: {tdd.GUIDE[phase]}"))
 
     def _observe(self, tool: str, output: str) -> None:
         self.messages.append({"role": "user", "content": OBSERVATION.format(tool=tool, output=clip(output))})

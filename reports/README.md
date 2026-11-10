@@ -5,6 +5,7 @@ caveats section of each before relying on a number.
 
 | Report | What it covers |
 |---|---|
+| `2026-10-19-acceptance-tasks.md` | the five acceptance tasks (`wombat_harness.tasks`) run once on Haiku `pai-tools`, `qwen2.5-coder:7b` and `gemma3:4b`; where the small models fail |
 | `2026-10-18-project-summary.md` | **Start here.** What exists, what the evidence supports, what is unknown, what is open |
 | `2026-10-18-gemma3-1b.md` | the author's `gemma3:1b` Mac run, a 20-run reproduction (0 genuine fixes), a flaw in the success criterion (audited), and the harness gaps it exposed (#14), including the denial fix |
 | `2026-10-18-pai-tools-haiku.md` | `pai-tools` on Claude Haiku 5.5 (10 of 10), deferred approvals, the tool-ordering race and its fix |
